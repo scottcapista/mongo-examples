@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import ChatMessage from './ChatMessage'
+import AdminPanel from './admin/AdminPanel'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
@@ -140,6 +141,7 @@ export default function App() {
   const [feedbackGiven, setFeedbackGiven] = useState(null)
   const [reasoningSteps, setReasoningSteps] = useState([])
   const [pendingQuestion, setPendingQuestion] = useState(null)
+  const [activeTab, setActiveTab] = useState('chat')
 
   const modelId = import.meta.env.VITE_LLM_MODEL_ID || ''
 
@@ -395,6 +397,22 @@ export default function App() {
       <header className="chat-header">
         <img src="/leaflogo.png" alt="Logo" style={{ height: 44, width: 'auto' }} />
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#001E2B' }}>MongoDB Atlas MCP AI Demo</h1>
+        <nav className="tab-bar" aria-label="Main navigation">
+          <button
+            type="button"
+            className={`tab-bar__btn ${activeTab === 'chat' ? 'tab-active' : ''}`}
+            onClick={() => setActiveTab('chat')}
+          >
+            Chat
+          </button>
+          <button
+            type="button"
+            className={`tab-bar__btn ${activeTab === 'admin' ? 'tab-active' : ''}`}
+            onClick={() => setActiveTab('admin')}
+          >
+            Admin
+          </button>
+        </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           <label htmlFor="username-input" style={{ fontSize: 13, color: '#555' }}>User:</label>
           <input
@@ -413,6 +431,10 @@ export default function App() {
         </div>
       </header>
 
+      {activeTab === 'admin' ? (
+        <AdminPanel username={username} />
+      ) : (
+        <>
       {/* Chat body */}
       <main className="chat-body" ref={chatBodyRef}>
         {visibleTurns.filter(t => !isGreeting(t) || t.assistantText).length === 0 && !loading && (
@@ -510,6 +532,8 @@ export default function App() {
           <button className="btn-danger" onClick={resetBackend} disabled={loading}>Reset backend</button>
         </div>
       </footer>
+        </>
+      )}
     </div>
   )
 }

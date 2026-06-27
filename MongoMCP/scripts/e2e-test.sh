@@ -45,10 +45,13 @@ STREAM=$(curl -s -X POST http://127.0.0.1:8001/query/stream \
   -d '{"input":"Say hello in one word","username":"demo-user","session_id":"e2e-test"}' \
   --max-time 45 | tail -1)
 
-if echo "$STREAM" | grep -q AccessDeniedException; then
-  echo "FAIL: Web UI -> MCP OK, but Bedrock denied"
-  echo "      Add bedrock:InvokeModel + bedrock:Converse to IAM user scapista"
-  echo "      and enable Claude in Bedrock console (us-east-1)"
+if echo "$STREAM" | grep -qE 'AccessDeniedException|Grove API [45]'; then
+  echo "FAIL: Web UI -> MCP OK, but LLM call failed"
+  if echo "$STREAM" | grep -q AccessDeniedException; then
+    echo "      Bedrock IAM denied — set LLM_PROVIDER=grove and GROVE_API_KEY, or fix Bedrock IAM"
+  else
+    echo "      Check GROVE_API_KEY / ANTHROPIC_BASE_URL in .env"
+  fi
   echo "$STREAM" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('content',{}).get('text','')[:200])" 2>/dev/null
   BEDROCK_FAIL=1
 elif echo "$STREAM" | grep -qi '"status":"Query Completed"'; then

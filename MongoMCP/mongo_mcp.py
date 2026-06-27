@@ -17,7 +17,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from local_settings import settings
 #from AWS_settings import settings # change this to use AWS_settings for production
-from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, ServerBedrockClient, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_bedrock_toolspecs, register_agent_tools, get_agent_bedrock_toolspecs, __version__ as MCP_VERSION
+from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_bedrock_toolspecs, register_agent_tools, get_agent_bedrock_toolspecs, __version__ as MCP_VERSION
+from mongomcp.llm_factory import create_server_llm_client
 from mongomcp.mongodb_client import query_capture_cv as _mongo_capture_cv, _query_capture_registry as _mongo_capture_registry, set_query_capture_enabled as _set_query_capture_enabled, _CAPTURE_LISTENER as _mongo_capture_listener
 from mongomcp.agent.prompt_agent import PromptAgent
 from mongomcp.agent.tool_router import ToolRouter
@@ -122,7 +123,8 @@ if not _mcp_auth_enabled:
 
 # Create FastMCP server instance with bearer token authentication
 # this is the mongo tools from config load.
-llm_client = ServerBedrockClient(settings)
+llm_client = create_server_llm_client(settings)
+logger.info("LLM provider: %s", getattr(settings, "LLM_PROVIDER", "bedrock"))
 mcp = FastMCP("mongodb-vector-server", auth=auth_provider)
 mcp.add_middleware(mongo_middleware)
 _query_dispatch = register_query_tools(mcp, mongo_server, llm_client, mongo_middleware.endpoint_tools)
@@ -565,7 +567,7 @@ async def reset_settings(token: Annotated[str, Depends(get_token)]) -> Dict[str,
     output = {"action": "reset settings"}
     try:
         setup_from_mongo()
-        new_client = ServerBedrockClient(settings)
+        new_client = create_server_llm_client(settings)
         new_client.configure_tools(mongo_middleware.build_tools_from_annotations())
         global llm_client
         llm_client = new_client

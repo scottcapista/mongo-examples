@@ -280,3 +280,365 @@ button {
   background-color: #e1e4e8;
   border: 0;
 }
+
+/* Tab navigation */
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-left: 16px;
+}
+
+.tab-bar__btn {
+  background: transparent;
+  border: none;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #555;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.tab-bar__btn:hover {
+  background: var(--mdb-light-green);
+  color: var(--mdb-mid);
+}
+
+.tab-active {
+  background: var(--mdb-light-green);
+  color: var(--mdb-mid);
+}
+
+/* Admin layout */
+.admin-layout {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.admin-sidebar {
+  flex-shrink: 0;
+  width: 180px;
+  background: var(--mdb-surface);
+  border-right: 1px solid #e0e0e0;
+  padding: 16px 0;
+}
+
+.admin-sidebar__item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-left: 3px solid transparent;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #444;
+  cursor: pointer;
+}
+
+.admin-sidebar__item:hover {
+  background: var(--mdb-light-green);
+  color: var(--mdb-mid);
+}
+
+.admin-sidebar__item--active {
+  border-left-color: var(--mdb-green);
+  background: var(--mdb-light-green);
+  color: var(--mdb-mid);
+}
+
+.admin-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+}
+
+.admin-loading,
+.admin-loading-inline {
+  color: #888;
+  font-size: 14px;
+}
+
+.admin-error,
+.admin-error-text {
+  color: #c0392b;
+  font-size: 13px;
+}
+
+.admin-back-btn {
+  margin-bottom: 16px;
+}
+
+/* Dataset list */
+.dataset-list__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 24px;
+}
+
+.dataset-list__toolbar h2 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--mdb-dark);
+}
+
+.dataset-list__empty {
+  color: #888;
+  font-size: 14px;
+}
+
+.dataset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.dataset-card {
+  text-align: left;
+  border: none;
+  border-radius: 12px;
+  padding: 18px 20px;
+  cursor: pointer;
+  transition: transform 0.15s, box-shadow 0.15s;
+  color: #fff;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dataset-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.15);
+}
+
+.dataset-card--growth {
+  background: #00684A;
+}
+
+.dataset-card--config {
+  background: #006CFA;
+}
+
+.dataset-card--personalization {
+  background: #7B3FF2;
+}
+
+.dataset-card__category {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  opacity: 0.85;
+}
+
+.dataset-card__name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.dataset-card__description {
+  margin: 0;
+  font-size: 13px;
+  opacity: 0.9;
+  flex: 1;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.dataset-card__meta {
+  font-size: 11px;
+  opacity: 0.8;
+}
+
+/* Dataset detail */
+.dataset-detail__header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.dataset-detail__header h2 {
+  margin: 0;
+  font-size: 24px;
+  color: var(--mdb-dark);
+}
+
+.dataset-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 10px;
+  border-radius: 12px;
+  color: #fff;
+}
+
+.dataset-badge--growth { background: #00684A; }
+.dataset-badge--config { background: #006CFA; }
+.dataset-badge--personalization { background: #7B3FF2; }
+
+.dataset-detail__description {
+  color: #555;
+  font-size: 14px;
+  margin: 0 0 8px;
+}
+
+.dataset-detail__meta {
+  color: #888;
+  font-size: 13px;
+  margin: 0 0 24px;
+}
+
+/* Upload form */
+.dataset-upload h2 {
+  margin: 0 0 20px;
+  font-size: 22px;
+  color: var(--mdb-dark);
+}
+
+.dataset-upload__form {
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+  color: #444;
+}
+
+.form-field input,
+.form-field textarea,
+.form-field select {
+  font-size: 14px;
+  padding: 8px 12px;
+  border: 1.5px solid #ccc;
+  border-radius: 8px;
+  outline: none;
+}
+
+.form-field input:focus,
+.form-field textarea:focus,
+.form-field select:focus {
+  border-color: var(--mdb-green);
+}
+
+.dataset-upload__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* Progress bar */
+.progress-bar-wrap {
+  margin: 8px 0;
+}
+
+.progress-bar {
+  height: 6px;
+  background: #e0e0e0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.progress-bar__fill {
+  height: 100%;
+  width: 40%;
+  background: var(--mdb-green);
+  border-radius: 3px;
+  animation: progress-indeterminate 1.2s ease-in-out infinite;
+}
+
+@keyframes progress-indeterminate {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(350%); }
+}
+
+.progress-bar__message {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #666;
+}
+
+/* Record cards */
+.record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.record-card {
+  background: var(--mdb-surface);
+  border: 1px solid #e0e0e0;
+  border-radius: 10px;
+  padding: 16px 20px;
+}
+
+.record-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.record-card__index {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--mdb-mid);
+}
+
+.record-card__textarea {
+  width: 100%;
+  font-family: 'SFMono-Regular', Consolas, monospace;
+  font-size: 13px;
+  padding: 12px;
+  border: 1.5px solid #ccc;
+  border-radius: 8px;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.record-card__actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.record-card__error {
+  color: #c0392b;
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.record-card__markdown {
+  font-size: 14px;
+  color: #333;
+}
+
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 24px;
+  padding-bottom: 24px;
+}
+
+.pagination__label {
+  font-size: 14px;
+  color: #555;
+}

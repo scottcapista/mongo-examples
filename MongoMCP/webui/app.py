@@ -5,6 +5,14 @@ from flask import Flask, send_from_directory, request, jsonify, abort, Response
 from flask_cors import CORS
 import requests
 from mcp_processor import APIQueryProcessor, QueryResponse, QueryRequest
+from dataset_service import (
+    list_datasets,
+    get_dataset,
+    get_records,
+    patch_record_markdown,
+    ingest_dataset,
+    ensure_indexes,
+)
 from mongomcp import __version__ as MCP_VERSION
 import mimetypes
 import traceback
@@ -254,6 +262,160 @@ def generate(payload):
         traceback.print_exc()
         yield QueryResponse(error=str(e)).json() + '\n'
 
+
+def _dataset_progress_json(stage: str, message: str, extra: Optional[dict] = None) -> str:
+  payload = {"stage": stage, "message": message}
+  if extra:
+    payload.update(extra)
+  return json.dumps(payload) + "\n"
+
+
+def _execute_streaming_job(func):
+    """Run func in a background thread; yield NDJSON lines from its emit queue."""
+    local_queue = queue.Queue()
+    result = [None]
+    exception = [None]
+
+    def emit(stage, message, extra=None):
+        local_queue.put(_dataset_progress_json(stage, message, extra))
+
+    def wrapper():
+        try:
+            result[0] = func(emit)
+        except Exception as e:
+            exception[0] = e
+
+    thread = threading.Thread(target=wrapper, daemon=True)
+    thread.start()
+
+    while thread.is_alive():
+        try:
+            yield local_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+
+    while not local_queue.empty():
+        yield local_queue.get()
+
+    if exception[0]:
+        yield json.dumps({"stage": "error", "message": str(exception[0])}) + "\n"
+    elif result[0] is not None:
+        yield json.dumps({"stage": "complete", "message": "Upload complete", **result[0]}, default=str) + "\n"
+
+
+def _parse_upload_params():
+    """Extract upload fields from multipart form or JSON body."""
+    if request.content_type and "multipart/form-data" in request.content_type:
+        name = (request.form.get("name") or "").strip()
+        description = (request.form.get("description") or "").strip()
+        category = (request.form.get("category") or "").strip()
+        username = (request.form.get("username") or "").strip()
+        text = (request.form.get("text") or "").strip()
+        upload_file = request.files.get("file")
+        raw_content = None
+        filename = ""
+        if upload_file and upload_file.filename:
+            raw_content = upload_file.read()
+            filename = upload_file.filename
+        elif text:
+            raw_content = text
+        return name, description, category, username, raw_content, filename
+
+    payload = request.get_json(force=True, silent=True) or {}
+    name = (payload.get("name") or "").strip()
+    description = (payload.get("description") or "").strip()
+    category = (payload.get("category") or "").strip()
+    username = (payload.get("username") or "").strip()
+    text = (payload.get("text") or "").strip()
+    raw_content = text if text else None
+    return name, description, category, username, raw_content, ""
+
+
+@app.route('/admin/datasets', methods=['GET'])
+def admin_list_datasets():
+    try:
+        return jsonify({"datasets": list_datasets()}), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/datasets/<dataset_id>', methods=['GET'])
+def admin_get_dataset(dataset_id):
+    try:
+        ds = get_dataset(dataset_id)
+        if not ds:
+            return jsonify({"error": "Dataset not found"}), 404
+        return jsonify(ds), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/datasets/<dataset_id>/records', methods=['GET'])
+def admin_get_records(dataset_id):
+    try:
+        page = request.args.get("page", 1, type=int)
+        limit = request.args.get("limit", 10, type=int)
+        return jsonify(get_records(dataset_id, page=page, limit=limit)), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/datasets/<dataset_id>/records/<record_id>', methods=['PATCH'])
+def admin_patch_record(dataset_id, record_id):
+    try:
+        payload = request.get_json(force=True) or {}
+        username = (payload.get("username") or "").strip()
+        display_markdown = payload.get("display_markdown")
+        if not username:
+            return jsonify({"error": "username required"}), 400
+        if display_markdown is None:
+            return jsonify({"error": "display_markdown required"}), 400
+        record = patch_record_markdown(dataset_id, record_id, username, display_markdown)
+        return jsonify(record), 200
+    except PermissionError as e:
+        return jsonify({"error": str(e)}), 403
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 404
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/datasets/upload/stream', methods=['POST'])
+def admin_upload_dataset_stream():
+    try:
+        name, description, category, username, raw_content, filename = _parse_upload_params()
+        if raw_content is None:
+            return jsonify({"error": "file or text content required"}), 400
+
+        def job(emit):
+            return ingest_dataset(
+                name=name,
+                description=description,
+                category=category,
+                owner=username,
+                raw_content=raw_content,
+                filename=filename,
+                emit=emit,
+            )
+
+        return Response(_execute_streaming_job(job), mimetype='application/x-ndjson')
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 400
+
+
+try:
+    ensure_indexes()
+except Exception:
+    app.logger.warning("Could not ensure admin dataset indexes on startup", exc_info=True)
+
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')
 def serve(path):
@@ -269,4 +431,5 @@ def serve(path):
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8001, debug=True)
+    debug = os.environ.get("FLASK_DEBUG", "1").lower() in ("1", "true", "yes")
+    app.run(host='0.0.0.0', port=8001, debug=debug)

@@ -14,7 +14,7 @@ from local_settings import settings
 from mongomcp.agent.cache_utils import create_cache_key as _create_cache_key
 from mongomcp.mongo_cache import MongoSessionCache
 from mongomcp.agent.tool_router import ToolRouter
-from mongomcp.agent.webui_bedrock_client import WebUiBedrockClient
+from mongomcp.llm_factory import create_webui_llm_client
 
 import logging
 logger = logging.getLogger(__name__)
@@ -72,9 +72,13 @@ class APIQueryProcessor:
         self._init_error: Optional[Exception] = None
         self._message_queue: queue.Queue = queue.Queue()
 
-        logger.info(f"Initializing processor with endpoint: {settings.mongo_mcp_root}")
+        logger.info(
+            "Initializing processor with endpoint: %s (LLM provider: %s)",
+            settings.mongo_mcp_root,
+            getattr(settings, "LLM_PROVIDER", "bedrock"),
+        )
         try:
-            self.llm_client = WebUiBedrockClient(settings)
+            self.llm_client = create_webui_llm_client(settings)
             self.mcp_endpoints: List[str] = []
             self.mcp_endpoint_configs: dict = {}
             self.endpoint_clients: dict = {}
