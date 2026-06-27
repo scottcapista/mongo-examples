@@ -2,6 +2,12 @@ from typing import Dict, Optional
 import os
 import json
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+except ImportError:
+    pass
+
 # local_settings.py — MCP server (mongo_mcp.py) local development settings.
 # Copy this to local_settings.py and fill in your values.
 # This is a drop-in replacement for AWS_settings.py that uses hardcoded credentials
@@ -28,7 +34,7 @@ class LocalSettings:
         self.aws_region = os.getenv('AWS_REGION', 'us-east-1')
 
         # Name of the MCP tool group served by this instance (matches mcp_tools collection key)
-        self.TOOL_NAME = os.getenv('MCP_TOOL_NAME', 'YourToolName')
+        self.TOOL_NAME = os.getenv('MCP_TOOL_NAME', 'AirbnbSearch')
 
         self.IS_LOCAL = json.loads(os.getenv('IS_LOCAL', 'true').lower())
 
@@ -59,11 +65,11 @@ class LocalSettings:
 
         self.agent_instructions = _MEMORY_AGENT_INSTRUCTIONS
 
-        # Hardcoded MongoDB credentials for local development — replace with your Atlas cluster details
+        # MongoDB credentials for local development (set via .env or environment)
         self._credentials: Dict[str, str] = {
-            "username": "your-mongo-username",
-            "password": "your-mongo-password",
-            "mongoUrl": "your-cluster.mongodb.net"
+            "username": os.getenv("MONGO_USERNAME", "your-mongo-username"),
+            "password": os.getenv("MONGO_PASSWORD", "your-mongo-password"),
+            "mongoUrl": os.getenv("MONGO_URL", "your-cluster.mongodb.net"),
         }
 
     def get_mongo_credentials(self) -> Dict[str, str]:

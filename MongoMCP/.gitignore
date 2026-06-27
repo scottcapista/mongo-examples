@@ -18,3 +18,9 @@ node_modules/
 
 # Virtual environments
 .venv
+
+# Local secrets
+.env
+.env.*
+!.env.example
+

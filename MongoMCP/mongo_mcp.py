@@ -15,8 +15,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastmcp.server.dependencies import AccessToken
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
-from AWS_settings import settings
-#from local_settings import settings # change this to use AWS_settings
+from local_settings import settings
+#from AWS_settings import settings # change this to use AWS_settings for production
 from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, ServerBedrockClient, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_bedrock_toolspecs, register_agent_tools, get_agent_bedrock_toolspecs, __version__ as MCP_VERSION
 from mongomcp.mongodb_client import query_capture_cv as _mongo_capture_cv, _query_capture_registry as _mongo_capture_registry, set_query_capture_enabled as _set_query_capture_enabled, _CAPTURE_LISTENER as _mongo_capture_listener
 from mongomcp.agent.prompt_agent import PromptAgent

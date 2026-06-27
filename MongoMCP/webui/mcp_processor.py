@@ -10,7 +10,7 @@ import mcp.types as mt
 import requests
 from pydantic import BaseModel
 
-from aws_settings import settings
+from local_settings import settings
 from mongomcp.agent.cache_utils import create_cache_key as _create_cache_key
 from mongomcp.mongo_cache import MongoSessionCache
 from mongomcp.agent.tool_router import ToolRouter

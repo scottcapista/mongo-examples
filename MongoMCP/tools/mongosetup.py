@@ -383,6 +383,7 @@ def run_setup(
 	agent_name: str = "webui_chatuser",
 	load_tools: bool = False,
 	use_aws: bool = False,
+	skip_airbnb: bool = False,
 ) -> None:
 	settings = _load_settings(use_aws=use_aws)
 	create_mcp_config_collections(settings)
@@ -393,7 +394,10 @@ def run_setup(
 		load_and_insert_mcp_tools(settings, mongo_client)
 	else:
 		print("Skipping mcp_tools load (use --load-tools to overwrite)")
-	create_airbnb_vector_search_index(mongo_client)
+	if skip_airbnb:
+		print("Skipping Airbnb vector search index (--skip-airbnb)")
+	else:
+		create_airbnb_vector_search_index(mongo_client)
 	create_mcp_cache_indexes(mongo_client)
 	create_memory_vector_search_indexes(mongo_client)
 	create_memory_semantic_fulltext_index(mongo_client)
@@ -436,6 +440,12 @@ def main() -> None:
 		default=False,
 		help="Use AWS_settings.py credentials instead of local_settings.py",
 	)
+	parser.add_argument(
+		"--skip-airbnb",
+		action="store_true",
+		default=False,
+		help="Skip sample_airbnb vector search index creation",
+	)
 	args = parser.parse_args()
 
 	run_setup(
@@ -443,6 +453,7 @@ def main() -> None:
 		agent_name=args.agent_name,
 		load_tools=args.load_tools,
 		use_aws=args.aws,
+		skip_airbnb=args.skip_airbnb,
 	)
 
 

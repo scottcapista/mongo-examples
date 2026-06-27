@@ -1,6 +1,13 @@
 import os
 from typing import Dict
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
+    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"))
+except ImportError:
+    pass
+
 # local_settings.py — drop-in replacement for aws_settings.py for local development.
 # Copy this to local_settings.py and fill in your values.
 # The MCP server (mongo_mcp.py) imports whichever settings module is named in the import.
@@ -51,11 +58,11 @@ class LocalSettings:
         # without Atlas Data API embedding; typically stored in your MongoDB secret in production)
         self.VOYAGE_AI_KEY = os.getenv('VOYAGE_AI_KEY', 'your-voyage-api-key-here')
 
-        # Hardcoded credentials for local development — replace with your Atlas cluster details
+        # MongoDB credentials for local development (set via .env or environment)
         self._credentials: Dict[str, str] = {
-            "username": "your-mongo-username",
-            "password": "your-mongo-password",
-            "mongoUrl": "your-cluster.mongodb.net"
+            "username": os.getenv("MONGO_USERNAME", "your-mongo-username"),
+            "password": os.getenv("MONGO_PASSWORD", "your-mongo-password"),
+            "mongoUrl": os.getenv("MONGO_URL", "your-cluster.mongodb.net"),
         }
 
     def get_mongo_credentials(self) -> Dict[str, str]:
