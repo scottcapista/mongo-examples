@@ -21,10 +21,13 @@ set -a
 source .env
 set +a
 
-echo "==> Seeding mcp_config (memory indexes only; no Airbnb sample data)..."
-python tools/mongosetup.py --load-tools --skip-airbnb | tee /tmp/mongosetup.log
+echo "==> Ensuring admin dataset indexes..."
+python tools/setup_admin_datasets.py
 
-TOKEN_LINE="$(rg 'AUTH_TOKEN = ' /tmp/mongosetup.log | tail -1 || true)"
+echo "==> Creating local agent identity and JWT..."
+python tools/generate_jwt_token.py --agent-name webui_chatuser | tee /tmp/local-setup-jwt.log
+
+TOKEN_LINE="$(rg 'AUTH_TOKEN = ' /tmp/local-setup-jwt.log | tail -1 || true)"
 if [[ -n "$TOKEN_LINE" ]]; then
   TOKEN="${TOKEN_LINE#AUTH_TOKEN = }"
   TOKEN="${TOKEN%\"}"
@@ -37,4 +40,4 @@ if [[ -n "$TOKEN_LINE" ]]; then
   echo "==> Updated MCP_AUTH_TOKEN in .env"
 fi
 
-echo "==> Setup complete (memory layer ready on mcp_config)."
+echo "==> Setup complete (agent identity + dataset indexes on mcp_config)."
