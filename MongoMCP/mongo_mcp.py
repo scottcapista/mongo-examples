@@ -17,7 +17,7 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from local_settings import settings
 #from AWS_settings import settings # change this to use AWS_settings for production
-from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_bedrock_toolspecs, register_agent_tools, get_agent_bedrock_toolspecs, __version__ as MCP_VERSION
+from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_toolspecs, register_agent_tools, get_agent_toolspecs, __version__ as MCP_VERSION
 from mongomcp.llm_factory import create_server_llm_client
 from mongomcp.mongodb_client import query_capture_cv as _mongo_capture_cv, _query_capture_registry as _mongo_capture_registry, set_query_capture_enabled as _set_query_capture_enabled, _CAPTURE_LISTENER as _mongo_capture_listener
 from mongomcp.agent.prompt_agent import PromptAgent
@@ -51,7 +51,7 @@ logger.setLevel(logging.INFO)
 main component flow:
 1. MongoMCPMiddleware: Connects to MongoDB config database, loads tool configurations, and prep token authorization.
 2. MongoDBQueryServer: Implements core MongoDB query functionalities for the specific tool_name from env
-3. BedrockClient: Handles AWS Bedrock LLM interactions and tool integrations.
+3. LlmClientBase: Handles AWS Grove LLM interactions and tool integrations.
 4. instantiate FastMCP servera with MongoMCPMiddleware, MongoDBQueryServer, MongoTokenVerifier
 5. instantiate FastAPI app, mounts FastMCP app
 6. define additional endpoints for health checks, tool configuration retrieval, settings reset, LLM invocation, and text vectorization.
@@ -124,7 +124,7 @@ if not _mcp_auth_enabled:
 # Create FastMCP server instance with bearer token authentication
 # this is the mongo tools from config load.
 llm_client = create_server_llm_client(settings)
-logger.info("LLM provider: %s", getattr(settings, "LLM_PROVIDER", "bedrock"))
+logger.info("LLM provider: %s", "grove")
 mcp = FastMCP("mongodb-vector-server", auth=auth_provider)
 mcp.add_middleware(mongo_middleware)
 _query_dispatch = register_query_tools(mcp, mongo_server, llm_client, mongo_middleware.endpoint_tools)
@@ -153,7 +153,7 @@ def _get_agent_tool_catalog():
     # Memory tools are always included — build them first so they survive any
     # endpoint-loading failure below.
     memory_tools = []
-    for t in get_memory_bedrock_toolspecs():
+    for t in get_memory_toolspecs():
         t = copy.deepcopy(t)
         t["toolSpec"]["name"] = f"memory_{t['toolSpec']['name']}"
         memory_tools.append(t)
@@ -493,22 +493,22 @@ async def http_get_collection_info(token: Annotated[str, Depends(get_token)]) ->
 
 @app.get(f"/{settings.TOOL_NAME}/llm_tools")
 async def http_get_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
-    """Returns preformatted Bedrock toolSpec JSON for the active tool endpoint (MongoDB annotations)."""
+    """Returns preformatted Grove toolSpec JSON for the active tool endpoint (MongoDB annotations)."""
     tools = mongo_middleware.build_tools_from_annotations()
     return {"tools": tools, "count": len(tools)}
 
 
 @app.get("/memory/llm_tools")
 async def http_get_memory_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
-    """Returns preformatted Bedrock toolSpec JSON for all memory layer tools."""
-    tools = get_memory_bedrock_toolspecs()
+    """Returns preformatted Grove toolSpec JSON for all memory layer tools."""
+    tools = get_memory_toolspecs()
     return {"tools": tools, "count": len(tools)}
 
 
 @app.get("/agent/llm_tools")
 async def http_get_agent_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
-    """Returns preformatted Bedrock toolSpec JSON for the agent layer (run_prompt)."""
-    tools = get_agent_bedrock_toolspecs()
+    """Returns preformatted Grove toolSpec JSON for the agent layer (run_prompt)."""
+    tools = get_agent_toolspecs()
     return {"tools": tools, "count": len(tools)}
 
 
@@ -522,7 +522,7 @@ async def http_get_memory_collection_info(token: Annotated[str, Depends(get_toke
         "description": "Self-curating persistent memory system with semantic search, graph linking, and shard scan. Always available on every container.",
         "database": getattr(settings, "memory_db", "mcp_config"),
         "collections": ["memory_episodic", "memory_semantic"],
-        "tools": [t["toolSpec"]["name"] for t in get_memory_bedrock_toolspecs()],
+        "tools": [t["toolSpec"]["name"] for t in get_memory_toolspecs()],
         "version": MCP_VERSION,
     }
 
@@ -635,7 +635,7 @@ async def invoke_llm_old(prompt_name: str, body: Dict[str, Any],
         global llm_client
         tools_config = [
             *mongo_middleware.build_tools_from_annotations(),
-            *get_memory_bedrock_toolspecs(),
+            *get_memory_toolspecs(),
         ]
         llm_client.configure_tools(tools_config)
 
@@ -650,11 +650,11 @@ async def invoke_llm_old(prompt_name: str, body: Dict[str, Any],
                 # Keep token handling in this top-level request scope.
                 return await tool_handler(token, toolname, tool_input)
 
-            # Bind request-scoped callback on the client instance; BedrockClient no longer
+            # Bind request-scoped callback on the client instance; LlmClientBase no longer
             # accepts a per-call tool callback parameter.
             llm_client.mcp_call = scoped_mcp_call
 
-            resp_obj = await llm_client.invoke_bedrock_with_tools(
+            resp_obj = await llm_client.invoke_with_tools(
                 prompt=prompt,
                 context=json.dumps(context),
             )

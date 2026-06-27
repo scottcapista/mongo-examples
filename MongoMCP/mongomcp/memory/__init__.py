@@ -42,7 +42,7 @@ def register_memory_tools(mcp, db_client, llm_client, settings) -> Dict[str, Any
     ----------
     mcp       : FastMCP instance (already configured with auth)
     db_client : MongoDBClient — motor client used to reach memory collections
-    llm_client: BedrockClient — used for generate_embedding and invoke_bedrock_text
+    llm_client: LlmClientBase — used for generate_embedding and invoke_text
     settings  : AWSSettings / LocalSettings — must have .memory_db attribute
 
     Returns
@@ -304,9 +304,9 @@ def build_memory_dispatch(db_client, llm_client, settings) -> Dict[str, Any]:
     return build_memory_tool_fns(svc)
 
 
-def get_memory_bedrock_toolspecs() -> List[Dict[str, Any]]:
+def get_memory_toolspecs() -> List[Dict[str, Any]]:
     """
-    Return Bedrock-format toolSpec dicts for all 9 memory tools.
+    Return toolSpec dicts for all 9 memory tools.
 
     These are injected directly into the LLM tool catalog by CachedQueryProcessor
     so memory tools are always available regardless of which MCP endpoints are

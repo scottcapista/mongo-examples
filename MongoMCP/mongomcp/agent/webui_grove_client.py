@@ -1,9 +1,29 @@
-"""Web UI Grove client — same response normalization as WebUiBedrockClient."""
+"""Web UI Grove client with text-oriented response normalization."""
 
+from __future__ import annotations
+
+import json
 from typing import Any, Dict, List, Optional
 
 from ..grove_anthropic_client import GroveAnthropicClient
-from .webui_bedrock_client import _extract_json_block
+
+JSON_DATA_START = "[JSON_DATA_START]"
+JSON_DATA_END = "[JSON_DATA_END]"
+
+
+def _extract_json_block(text: str):
+    """Extract JSON from [JSON_DATA_START]...[JSON_DATA_END] tags."""
+    start_idx = text.find(JSON_DATA_START)
+    end_idx = text.find(JSON_DATA_END)
+    if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
+        return None, text.strip()
+    json_str = text[start_idx + len(JSON_DATA_START) : end_idx].strip()
+    clean = (text[:start_idx] + text[end_idx + len(JSON_DATA_END) :]).strip()
+    try:
+        parsed = json.loads(json_str)
+        return parsed, clean
+    except (json.JSONDecodeError, TypeError):
+        return None, text.strip()
 
 
 class WebUiGroveClient(GroveAnthropicClient):
@@ -23,7 +43,7 @@ class WebUiGroveClient(GroveAnthropicClient):
             )
         return {"messages": request_messages}
 
-    async def invoke_bedrock_with_tools(
+    async def invoke_with_tools(
         self,
         prompt: Optional[str] = None,
         context: Optional[str] = None,
@@ -34,22 +54,22 @@ class WebUiGroveClient(GroveAnthropicClient):
             context=context,
             messages=messages,
         )
-        return await super().invoke_bedrock_with_tools(request=request)
+        return await super().invoke_with_tools(request=request)
 
-    async def invoke_bedrock_with_tools_text(
+    async def invoke_with_tools_text(
         self,
         prompt: Optional[str] = None,
         context: Optional[str] = None,
         messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        raw = await self.invoke_bedrock_with_tools(
+        raw = await self.invoke_with_tools(
             prompt=prompt,
             context=context,
             messages=messages,
         )
-        return self.normalize_bedrock_response(raw, fallback_history=messages or [])
+        return self.normalize_llm_response(raw, fallback_history=messages or [])
 
-    def normalize_bedrock_response(
+    def normalize_llm_response(
         self,
         response_obj: Dict[str, Any],
         fallback_history: Optional[List[Dict[str, Any]]] = None,

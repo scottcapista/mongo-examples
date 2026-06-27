@@ -56,13 +56,13 @@ class PatternCache:
 
     def __init__(self, settings: Any, tool_scope: Optional[str] = None):
         from ..mongodb_client import MongoDBClient  # noqa: PLC0415
-        from ..bedrock_client import BedrockClient  # noqa: PLC0415
+        from ..llm_client_base import LlmClientBase  # noqa: PLC0415
         import copy
 
         local_settings = copy.copy(settings)
         local_settings.mcp_config_col = self._COLLECTION
         self._mongo = MongoDBClient(settings=local_settings)
-        self._bedrock = BedrockClient(settings)
+        self._llm = LlmClientBase(settings)
         self._mcp_root: str = getattr(settings, "mongo_mcp_root", "")
         self._auth_token: str = getattr(settings, "AUTH_TOKEN", "")
         self._headers = {
@@ -123,9 +123,9 @@ class PatternCache:
             return None
 
     async def _vectorize(self, text: str) -> Optional[List[float]]:
-        """Generate an embedding vector for text using Voyage AI via BedrockClient."""
+        """Generate an embedding vector for text using Voyage AI via LlmClientBase."""
         try:
-            return await self._bedrock.generate_voyage_embeddings(text=text, is_query=True)
+            return await self._llm.generate_voyage_embeddings(text=text, is_query=True)
         except Exception as e:
             logger.warning(f"PatternCache vectorize failed (embedding skipped): {e}")
             return None
@@ -567,7 +567,7 @@ class PatternCache:
 
     @staticmethod
     def _extract_tool_calls_from_history(history: list) -> List[Dict[str, Any]]:
-        """Pull tool name + input from Bedrock toolUse blocks in history."""
+        """Pull tool name + input from Grove toolUse blocks in history."""
         calls = []
         for msg in history:
             if msg.get("role") != "assistant":
@@ -670,13 +670,13 @@ class PatternCache:
 
         Args:
             pattern: The abstract pattern string from the router.
-            history: Bedrock conversation history (may span multiple turns).
+            history: Grove conversation history (may span multiple turns).
             response_text: The final LLM response text.
             selected_tools: Tool names the router selected for this pattern.
                 Used to filter history to only relevant calls and preserved
                 as the authoritative ``tools`` list.
             jsondata: Parsed JSON data object from the response (already
-                extracted by normalize_bedrock_response).  Used to build
+                extracted by normalize_llm_response).  Used to build
                 the output_hint when the raw text no longer contains
                 [JSON_DATA_START] tags.
             question: The original natural-language question.  Stored as an
@@ -747,10 +747,10 @@ class PatternCache:
         history: list,
         allowed_tools: Optional[List[str]] = None,
     ) -> List[Dict[str, Any]]:
-        """Pull tool_name + tool_input from Bedrock toolUse blocks in conversation history.
+        """Pull tool_name + tool_input from Grove toolUse blocks in conversation history.
 
         Args:
-            history: Bedrock conversation messages.
+            history: Grove conversation messages.
             allowed_tools: If provided, only keep calls whose tool name is in
                 this list. This prevents leaking hints from earlier unrelated
                 conversation turns.
@@ -804,7 +804,7 @@ class PatternCache:
         """Build a compact output hint from the parsed jsondata object.
 
         This is the fallback when [JSON_DATA_START] tags have already been
-        stripped from response_text by normalize_bedrock_response.
+        stripped from response_text by normalize_llm_response.
         """
         try:
             if isinstance(jsondata, str):

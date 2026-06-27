@@ -152,7 +152,7 @@ class MongoMCPMiddleware(Middleware):
         return self._PYTHON_TO_JSON_SCHEMA_TYPE.get(t, "string")
 
     def build_tools_from_annotations(self) -> List[Dict]:
-        """Build Bedrock toolSpec JSON entirely from MongoDB annotations.
+        """Build Grove toolSpec JSON entirely from MongoDB annotations.
 
         Requires no FastMCP introspection — all tool names, descriptions, parameter
         types, defaults, and required lists come directly from the MongoDB config
@@ -160,7 +160,7 @@ class MongoMCPMiddleware(Middleware):
         wherever you previously needed to first call mcp.get_tools().
 
         Returns:
-            List of dicts in Bedrock toolSpec format, ready for LLM consumption.
+            List of dicts in Grove toolSpec format, ready for LLM consumption.
         """
         self.load_annotations()
         tools_dict = []
@@ -200,7 +200,7 @@ class MongoMCPMiddleware(Middleware):
         return tools_dict
 
     def build_tools_from_all_endpoints(self) -> List[Dict]:
-        """Build Bedrock toolSpec for ALL active endpoints from MongoDB, with endpoint-name prefix.
+        """Build Grove toolSpec for ALL active endpoints from MongoDB, with endpoint-name prefix.
 
         Each tool name is prefixed as '<endpoint_name>_<tool_name>' so the HTTP dispatch
         in _make_mcp_call_fn can split on the first '_' to route to the correct MCP mount.
@@ -208,7 +208,7 @@ class MongoMCPMiddleware(Middleware):
         In local mode, returns only the current endpoint's tools (same as build_tools_from_annotations).
 
         Returns:
-            List of dicts in Bedrock toolSpec format with prefixed tool names.
+            List of dicts in Grove toolSpec format with prefixed tool names.
         """
         if self._is_local:
             # Local mode: only one endpoint available; prefix current tools normally.

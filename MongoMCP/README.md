@@ -1,6 +1,6 @@
 # Dynamic MongoDB MCP Server
 
-A configurable Model Context Protocol (MCP) server that dynamically loads tool configurations from MongoDB. Includes a Web UI agent frontend backed by Amazon Bedrock.
+A configurable Model Context Protocol (MCP) server that dynamically loads tool configurations from MongoDB. Includes a Web UI agent frontend backed by MongoDB Grove.
 
 ![Architecture](../AgenticArchitecture.png)
 
@@ -9,15 +9,15 @@ A configurable Model Context Protocol (MCP) server that dynamically loads tool c
 ```
 webui/          Flask + React frontend, talks to MCP server over HTTP
 mongo_mcp.py    FastMCP server exposing MongoDB tools via HTTP
-mongomcp/       Core package: server, middleware, auth, Bedrock client, cache
-mongomcp/agent/ Web UI subpackage: CachedQueryProcessor, ToolRouter, WebUiBedrockClient
+mongomcp/       Core package: server, middleware, auth, Grove LLM client, cache
+mongomcp/agent/ Web UI subpackage: CachedQueryProcessor, ToolRouter, WebUiGroveClient
 ```
 
 ## Prerequisites
 
 - Python 3.10+
 - Docker (for container targets)
-- AWS credentials in `~/.aws/` (Bedrock + Secrets Manager)
+- AWS credentials in `~/.aws/` (Secrets Manager, optional for local dev)
 - MongoDB Atlas cluster with an MCP config collection and target data collection(s)
 
 
@@ -111,7 +111,7 @@ python tools/mongosetup.py
 
 | Variable | Default | Description |
 |---|---|---|
-| `AWS_REGION` | `us-east-2` | AWS region for Bedrock and Secrets Manager |
+| `AWS_REGION` | `us-east-2` | AWS region for Secrets Manager |
 | `MONGO_CREDS` | — | AWS Secrets Manager secret name for MongoDB credentials |
 | `MCP_TOOL_NAME` | `airbnbSearch` | Which tool config to load from MongoDB |
 | `IS_LOCAL` | `true` | `true` = skip Secrets Manager, use hardcoded local creds |
@@ -263,7 +263,7 @@ Then point your client at `http://localhost:8000/sse`.
 
 ## Troubleshooting
 
-- **AWS auth errors**: confirm `~/.aws/credentials` is valid and the IAM role has Bedrock + Secrets Manager access
+- **AWS auth errors**: confirm `~/.aws/credentials` is valid and the IAM role has Secrets Manager access
 - **Tool discovery empty**: check `MCP_TOOL_NAME` matches a document `Name` field in your config collection
 - **Vector dimension mismatch**: embedding dimensions in your index must match the model output (`amazon.titan-embed-text-v2:0` → 1024)
 - **Container can't reach MCP server**: when running WebUI container locally, set `MONGO_MCP_ROOT=http://host.docker.internal:8000`

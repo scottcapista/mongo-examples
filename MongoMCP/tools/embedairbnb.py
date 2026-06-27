@@ -12,22 +12,22 @@ from pymongo import UpdateOne
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from local_settings import settings
-from mongomcp.bedrock_client import BedrockClient
+from mongomcp.llm_client_base import LlmClientBase
 from mongomcp.mongodb_client import MongoDBClient
 
 class DocumentVectorizer:
     """A class to process JSON documents, chunk them, vectorize chunks, and store in MongoDB.
 
-    This class integrates AWS Bedrock for vectorization and MongoDB Atlas for storage,
+    This class integrates AWS Grove for vectorization and MongoDB Atlas for storage,
     handling document retrieval, chunking, embedding generation, and persistence.
     """
 
     def __init__(self, target_database: str = "sample_airbnb", target_collection: str = "listingsAndReviews"):
         """Initializes the DocumentVectorizer with configuration from settings.py.
 
-        Sets up Bedrock and MongoDB clients, and connects to source and target collections.
+        Sets up Grove and MongoDB clients, and connects to source and target collections.
         """
-        self.bedrock_client = BedrockClient(settings=settings)
+        self.llm_client = LlmClientBase(settings=settings)
         self.mongo_client = MongoDBClient(settings=settings)
         self.mongo_client.set_config(
             {
@@ -46,8 +46,8 @@ class DocumentVectorizer:
     async def generate_embedding_async(self, chunk_text: str) -> list:
         """Async version of embedding generation for use within an event loop."""
         if self.is_voyage_embedding:
-            return await self.bedrock_client.generate_voyage_embeddings(chunk_text, is_query=False)
-        return await self.bedrock_client.generate_embedding(chunk_text)
+            return await self.llm_client.generate_voyage_embeddings(chunk_text, is_query=False)
+        return await self.llm_client.generate_embedding(chunk_text)
 
 
     async def _process_single_document_async(self, document: dict, fn_chunk) -> tuple:

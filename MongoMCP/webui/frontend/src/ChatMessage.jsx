@@ -148,7 +148,7 @@ function JsonViewer({ data }) {
   )
 }
 
-/** Extract a friendly display name from a Bedrock model ID like "global.anthropic.claude-sonnet-4-6" */
+/** Extract a friendly display name from a model ID like "claude-sonnet-4-6" */
 function friendlyModelName(modelId) {
   if (!modelId) return 'Atlas AI'
   // Strip cross-region prefix (e.g. "global.", "us.")

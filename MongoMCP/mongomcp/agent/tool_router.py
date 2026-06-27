@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 class ToolRouter:
-    """Select a subset of Bedrock toolSpecs relevant to a question.
+    """Select a subset of Grove toolSpecs relevant to a question.
 
     Supports two routing strategies:
     1. **LLM routing** — sends tool names + descriptions to the LLM and asks it
@@ -16,8 +16,8 @@ class ToolRouter:
        (from a JSON spec, MongoDB config, etc.) and filters the catalog directly.
        No LLM call, deterministic and fast.
 
-    Both strategies produce the same output: a filtered list of Bedrock toolSpec
-    dicts ready to pass to `BedrockClient.configure_tools()`.
+    Both strategies produce the same output: a filtered list of Grove toolSpec
+    dicts ready to pass to `LlmClientBase.configure_tools()`.
 
     Usage (client-side, inside CachedQueryProcessor):
         router = ToolRouter(all_tools, llm_client=self.llm_client)
@@ -44,8 +44,8 @@ class ToolRouter:
     ):
         """
         Args:
-            tool_catalog: Full list of Bedrock toolSpec dicts (with endpoint prefix already applied).
-            llm_client: A BedrockClient (or subclass) instance for LLM routing. Not needed for static routing.
+            tool_catalog: Full list of Grove toolSpec dicts (with endpoint prefix already applied).
+            llm_client: A LlmClientBase (or subclass) instance for LLM routing. Not needed for static routing.
             message_handler: Optional progress callback matching (message, status) signature.
             settings: Application settings object.
             memory_fns: Dict of {tool_name: async_fn} from build_memory_dispatch().
@@ -283,7 +283,7 @@ class ToolRouter:
             f"Question: {question}"
         )
         try:
-            response_text = await self.llm_client.invoke_bedrock_text(user_text)
+            response_text = await self.llm_client.invoke_text(user_text)
         except Exception as e:
             logger.warning(f"ToolRouter LLM call failed: {e}")
             # Return full catalog (including memory) on error
@@ -530,7 +530,7 @@ class ToolRouter:
             )
 
             self.message_handler("Generating PII-free playbook from interaction...", status="Strategy Store")
-            playbook = await self.llm_client.invoke_bedrock_text(prompt)
+            playbook = await self.llm_client.invoke_text(prompt)
 
             if not playbook or len(playbook) < 50:
                 logger.warning("LLM returned empty/short playbook, skipping save")
@@ -583,7 +583,7 @@ class ToolRouter:
     def _extract_tool_calls(
         history: list, allowed_tools: Optional[List[str]] = None
     ) -> List[Dict[str, Any]]:
-        """Pull tool name + input from Bedrock toolUse blocks in history."""
+        """Pull tool name + input from Grove toolUse blocks in history."""
         calls = []
         allowed = set(allowed_tools) if allowed_tools else None
         for msg in history:

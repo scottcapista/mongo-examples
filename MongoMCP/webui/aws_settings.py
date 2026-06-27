@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 class AWSSettings:
     def __init__(self):
-        # AWS region where Secrets Manager and Bedrock are deployed
+        # AWS region where Secrets Manager and Grove are deployed
         self.aws_region = os.getenv('AWS_REGION', 'us-east-1')
 
         # AWS Secrets Manager secret name/ARN containing MongoDB credentials
@@ -20,10 +20,18 @@ class AWSSettings:
         self.mcp_config_db = "mcp_config"
         self.mcp_config_col = "mcp_tools"
 
-        # LLM model — Bedrock cross-region inference profile ID
-        self.LLM_MODEL_ID = os.getenv('LLM_MODEL_ID', 'global.anthropic.claude-sonnet-4-6')
+        # LLM — Grove
+        self.LLM_PROVIDER = "grove"
+        self.GROVE_API_KEY = os.getenv("GROVE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+        self.ANTHROPIC_BASE_URL = os.getenv(
+            "ANTHROPIC_BASE_URL",
+            "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
+        ).rstrip("/")
+        self.ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+        self.LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "claude-sonnet-4-6")
+        self.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
-        # Embedding model — "voyage-4" uses Voyage AI via Atlas; "amazon.titan-embed-text-v2:0" uses Bedrock
+        # Embedding model — voyage-* uses Voyage AI via Atlas
         self.EMBEDDING_MODEL_ID = os.getenv('EMBEDDING_MODEL_ID', 'voyage-4')
         self.QUERY_EMBEDDING_MODEL_ID = os.getenv(
             'QUERY_EMBEDDING_MODEL_ID',
@@ -34,9 +42,9 @@ class AWSSettings:
         self.LLM_MAX_ITERATIONS = int(os.getenv('LLM_MAX_ITERATIONS', '15'))
         self.LLM_MAX_HISTORY = int(os.getenv('LLM_MAX_HISTORY', '20'))
 
-        # Bedrock prompt caching (reduces cost on repeated system prompts)
+        # Grove prompt caching (reduces cost on repeated system prompts)
         self.ENABLE_CACHE_POINTS = os.getenv('ENABLE_CACHE_POINTS', 'true').lower() in ['1', 'true', 'yes', 'on']
-        self.ENABLE_BEDROCK_CACHING = True
+        self.ENABLE_LLM_CACHING = True
         self.ENABLE_MCP_TOOL_CACHING = False  # Not implemented in webui path (APIQueryProcessor)
         self.ENABLE_RESPONSE_CACHING = False
         self.CACHE_TTL = 300
@@ -49,8 +57,8 @@ class AWSSettings:
         # URL of the MCP server (mongo_mcp.py or deployed service)
         self.mongo_mcp_root = os.getenv('MONGO_MCP_ROOT', 'http://localhost:8000')
 
-        # System prompt injected into every Bedrock conversation
-        self.BEDROCK_SYSTEM_PROMPT_TEXTS = [
+        # System prompt injected into every Grove conversation
+        self.SYSTEM_PROMPT_TEXTS = [
             "***IMPORTANT: DO NOT recall sessions by username until you have confirmed the username with the user. DO NOT ASSUME you know the Username. Default username is demo-user",
             "***IMPORTANT: STRATEGY FIRST: Before any tool call execute memory_strategy_recall to find applicable patterns THEN EXECUTE the found pattern. Validated and high scoring patterns CANNOT be ignored.***",
             "***IMPORTANT: All output should be Markdown formatted for display within a div in an existing webpage. Do not include html, head, or body tags. Only include the inner content. Always use Markdown formatting.",

@@ -22,10 +22,10 @@ function stripJsonDataBlock(text) {
 }
 
 /**
- * Parse a Bedrock history array into structured conversation turns.
+ * Parse an LLM history array into structured conversation turns.
  * Each turn: { userText, assistantText, toolCalls: [{name, input, result}] }
  *
- * Bedrock history groups:
+ * LLM history groups:
  *   user(text) → assistant(text + toolUse*) → user(toolResult*) → assistant(text) → ...
  * We collapse all assistant + toolResult exchanges for a given user question into one turn.
  */

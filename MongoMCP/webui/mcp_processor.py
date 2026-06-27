@@ -75,7 +75,7 @@ class APIQueryProcessor:
         logger.info(
             "Initializing processor with endpoint: %s (LLM provider: %s)",
             settings.mongo_mcp_root,
-            getattr(settings, "LLM_PROVIDER", "bedrock"),
+            "grove",
         )
         try:
             self.llm_client = create_webui_llm_client(settings)
@@ -191,15 +191,15 @@ class APIQueryProcessor:
                     self.mcp_endpoints = cached.get("endpoints", [])
                     self.mcp_endpoint_configs = cached.get("endpoint_configs", {})
                     self.mongo_collection_info = cached.get("collection_info", {})
-                    bedrock_tools = cached.get("tools", [])
+                    llm_tools = cached.get("tools", [])
                     system_prompt = cached.get("system_prompt", [])
                     self._base_system_prompt = system_prompt
                     self.llm_client.system = system_prompt
-                    self.mcp_tools_config = bedrock_tools
+                    self.mcp_tools_config = llm_tools
                     self._tools_fetched_at = time.monotonic()
-                    self.llm_client.configure_tools(bedrock_tools, self._call_mcp_tool)
+                    self.llm_client.configure_tools(llm_tools, self._call_mcp_tool)
                     emit_fn(
-                        f"Ready (cached): {len(bedrock_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)",
+                        f"Ready (cached): {len(llm_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)",
                         status="Tools Ready",
                     )
                     return
@@ -235,10 +235,10 @@ class APIQueryProcessor:
             self._fetch_endpoint(name, root_fmt, emit=emit_fn) for name in self.mcp_endpoints
         ])
 
-        bedrock_tools, agent_prompts = [], {}
+        llm_tools, agent_prompts = [], {}
         for name, config, tools, collection_info, agent_prompt in results:
             self.mcp_endpoint_configs[name] = config
-            bedrock_tools.extend(tools)
+            llm_tools.extend(tools)
             if collection_info:
                 self.mongo_collection_info[name] = collection_info
             if agent_prompt and agent_prompt.strip():
@@ -250,7 +250,7 @@ class APIQueryProcessor:
         # Also cap each call at 15s so a slow endpoint never kills the gunicorn worker.
         memory_has_tools = any(
             t.get("toolSpec", {}).get("name", "").startswith("memory_")
-            for t in bedrock_tools
+            for t in llm_tools
         )
         db_prompts = []
         if not memory_has_tools:
@@ -274,7 +274,7 @@ class APIQueryProcessor:
         if db_prompts:
             system_prompt = [{"text": t} for t in db_prompts]
         else:
-            system_prompt = [{"text": t} for t in getattr(settings, "BEDROCK_SYSTEM_PROMPT_TEXTS", [])]
+            system_prompt = [{"text": t} for t in getattr(settings, "SYSTEM_PROMPT_TEXTS", [])]
         for ep, pt in agent_prompts.items():
             system_prompt.append({"text": f"***IMPORTANT {ep}: {pt}"})
         non_empty = {k: v for k, v in self.mongo_collection_info.items() if v}
@@ -284,22 +284,22 @@ class APIQueryProcessor:
 
         self._base_system_prompt = system_prompt
         self.llm_client.system = system_prompt
-        self.mcp_tools_config = bedrock_tools
+        self.mcp_tools_config = llm_tools
         self._tools_fetched_at = time.monotonic()
-        self.llm_client.configure_tools(bedrock_tools, self._call_mcp_tool)
+        self.llm_client.configure_tools(llm_tools, self._call_mcp_tool)
         emit_fn(
-            f"Ready: {len(bedrock_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)",
+            f"Ready: {len(llm_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)",
             status="Tools Ready",
         )
 
         # Persist discovery to MongoDB for future restarts.
-        if self._tool_discovery_cache is not None and bedrock_tools:
+        if self._tool_discovery_cache is not None and llm_tools:
             try:
                 await self._tool_discovery_cache.set(_DISCOVERY_CACHE_KEY, {
                     "endpoints": self.mcp_endpoints,
                     "endpoint_configs": self.mcp_endpoint_configs,
                     "collection_info": self.mongo_collection_info,
-                    "tools": bedrock_tools,
+                    "tools": llm_tools,
                     "system_prompt": system_prompt,
                 }, ttl=getattr(settings, "CACHE_TTL", 300))
                 logger.info("Tool discovery saved to MongoDB cache")
@@ -555,7 +555,7 @@ class APIQueryProcessor:
                 effective_system.append({"text": _ctx_block})
             self.llm_client.system = effective_system
             self.llm_client.configure_tools(self.mcp_tools_config, self._call_mcp_tool)
-            return await self.llm_client.invoke_bedrock_with_tools_text(messages=msgs)
+            return await self.llm_client.invoke_with_tools_text(messages=msgs)
 
         result = asyncio.run(_invoke())
         if self._looks_like_no_tools_error(result):
@@ -691,7 +691,7 @@ class APIQueryProcessor:
 
         result = flatten(turns)
         # Find the first clean user message (not a toolResult-only message)
-        # to avoid starting history mid tool-use cycle which Bedrock rejects.
+        # to avoid starting history mid tool-use cycle which Grove rejects.
         for i, msg in enumerate(result):
             if msg.get("role") == "user":
                 result = result[i:]
@@ -708,7 +708,7 @@ class APIQueryProcessor:
 
         When _trim_history drops the front of the conversation it can cut the
         assistant toolUse message while leaving the user toolResult response,
-        producing a history[0] = user/toolResult that Bedrock rejects with
+        producing a history[0] = user/toolResult that Grove rejects with
         'Expected toolResult blocks ... for the following Ids: <id>'.
 
         This pass collects all toolUseIds mentioned in assistant toolUse blocks,

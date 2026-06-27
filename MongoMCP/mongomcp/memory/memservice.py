@@ -70,8 +70,8 @@ class MemoryService:
         must be an AsyncIOMotorClient. ensure_connection() is called
         before every operation.
     llm_client:
-        A BedrockClient instance that exposes generate_embedding() and
-        invoke_bedrock_text().
+        A LlmClientBase instance that exposes generate_embedding() and
+        invoke_text().
     memory_db_name:
         The MongoDB database that holds the memory collections.
         Typically comes from settings.memory_db (default "mcp_config").
@@ -1238,7 +1238,7 @@ class MemoryService:
             f"{memory_text}"
         )
 
-        summary_text = await self.llm_client.invoke_bedrock_text(prompt)
+        summary_text = await self.llm_client.invoke_text(prompt)
 
         if not summary_text:
             return {"error": "LLM summarisation failed — empty response", "session_id": session_id, "memories_reflected": len(docs)}

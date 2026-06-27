@@ -35,7 +35,7 @@ async def _get_raw_jwt(
     return credentials.credentials if credentials else ""
 
 _AGENT_TOOL_DESCRIPTION = (
-    "Run a focused sub-agent that executes a full Bedrock invoke loop with a specific "
+    "Run a focused sub-agent that executes a full Grove invoke loop with a specific "
     "prompt and an optionally filtered tool set.\n\n"
     "**REQUIRED WORKFLOW — always follow these steps before calling this tool:**\n"
     "1. Call memory_strategy_recall with the task description as the query to search for "
@@ -49,8 +49,8 @@ _AGENT_TOOL_DESCRIPTION = (
 )
 
 
-def get_agent_bedrock_toolspecs() -> List[Dict[str, Any]]:
-    """Return Bedrock-format toolSpec dicts for agent tools (bare names, no prefix).
+def get_agent_toolspecs() -> List[Dict[str, Any]]:
+    """Return toolSpec dicts for agent tools (bare names, no prefix).
 
     Called by /agent/llm_tools so the webui can discover and prefix the tools
     the same way it handles memory tools (memory_intake, memory_recall, etc.).
@@ -130,7 +130,7 @@ def register_agent_tools(
     ----------
     mcp          : FastMCP instance (already configured with auth)
     settings     : Application settings — must expose ``mongo_mcp_root`` (MONGO_MCP_ROOT env)
-    get_tools_fn : Callable ``() -> List[dict]`` — returns endpoint-prefixed Bedrock toolSpec
+    get_tools_fn : Callable ``() -> List[dict]`` — returns endpoint-prefixed Grove toolSpec
                    dicts for the sub-agent's tool catalog (no agent_ tools to prevent recursion)
 
     Returns
@@ -159,7 +159,7 @@ def register_agent_tools(
         token: Annotated[AccessToken, Depends(get_access_token)] = None,
         ctx: Context = CurrentContext(),
     ):
-        """Run a focused sub-agent Bedrock invoke loop with filtered tools and streaming progress.
+        """Run a focused sub-agent Grove invoke loop with filtered tools and streaming progress.
 
         REQUIRED WORKFLOW: call memory_strategy_recall first to find a matching strategy,
         then pass its _id as memory_id and payload.tools as tool_names.

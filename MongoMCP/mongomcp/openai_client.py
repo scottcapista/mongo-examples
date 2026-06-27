@@ -109,7 +109,7 @@ class OpenAIClient:
 
     def _convert_mcp_tools_to_openai_format(self) -> List[Dict[str, Any]]:
         """
-        Convert MCP tools from Bedrock format to OpenAI function calling format.
+        Convert MCP tools from tool-calling format to OpenAI function calling format.
 
         Returns:
             List of tool definitions in OpenAI format
@@ -133,12 +133,12 @@ class OpenAIClient:
 
         return openai_tools
 
-    def _convert_bedrock_messages_to_openai(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tool_messages_to_openai(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Convert Bedrock message format to OpenAI message format.
+        Convert tool message format to OpenAI message format.
 
         Args:
-            messages: List of messages in Bedrock format
+            messages: List of messages in tool-calling format
 
         Returns:
             List of messages in OpenAI format
@@ -207,15 +207,15 @@ class OpenAIClient:
 
         return openai_messages
 
-    def _convert_openai_message_to_bedrock(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _convert_openai_message_to_tool(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert OpenAI message format back to Bedrock format.
+        Convert OpenAI message format back to tool-calling format.
 
         Args:
             message: Message in OpenAI format
 
         Returns:
-            Message in Bedrock format
+            Message in tool-calling format
         """
         role = message.get('role', '')
 
@@ -297,7 +297,7 @@ class OpenAIClient:
 
         Args:
             request: Unified request payload with keys:
-                - messages: list of Bedrock conversation messages (will be converted)
+                - messages: list of tool conversation messages (will be converted)
             Client-level options used by this method:
                 - self.system
                 - self.max_iterations
@@ -329,8 +329,8 @@ class OpenAIClient:
                 "error": "Invalid request: at least one message is required",
             }
 
-        # Convert Bedrock messages to OpenAI format
-        openai_messages = self._convert_bedrock_messages_to_openai(messages)
+        # Convert tool messages to OpenAI format
+        openai_messages = self._convert_tool_messages_to_openai(messages)
 
         # Add system message if configured
         if self.system:
@@ -393,9 +393,9 @@ class OpenAIClient:
                 # Add assistant message to conversation
                 openai_messages.append(assistant_message.model_dump(exclude_unset=True))
 
-                # Convert back to Bedrock format and add to history
-                bedrock_message = self._convert_openai_message_to_bedrock(assistant_message.model_dump())
-                messages.append(bedrock_message)
+                # Convert back to tool-calling format and add to history
+                tool_message = self._convert_openai_message_to_tool(assistant_message.model_dump())
+                messages.append(tool_message)
                 return_obj["history"] = messages
 
                 # Check if max iterations reached
@@ -405,7 +405,7 @@ class OpenAIClient:
                 # Check if the assistant wants to use tools
                 if assistant_message.tool_calls:
                     tool_results_openai = []
-                    tool_results_bedrock = []
+                    tool_results_tool = []
 
                     for tool_call in assistant_message.tool_calls:
                         function = tool_call.function
@@ -428,8 +428,8 @@ class OpenAIClient:
                                 "content": str(tool_result)
                             })
 
-                            # Bedrock format
-                            tool_results_bedrock.append({
+                            # tool-calling format
+                            tool_results_tool.append({
                                 "toolResult": {
                                     "toolUseId": tool_call_id,
                                     "content": [{"text": str(tool_result)}]
@@ -442,7 +442,7 @@ class OpenAIClient:
                                 "tool_call_id": tool_call_id,
                                 "content": f"Error: {str(e)}"
                             })
-                            tool_results_bedrock.append({
+                            tool_results_tool.append({
                                 "toolResult": {
                                     "toolUseId": tool_call_id,
                                     "content": [{"text": f"Error: {str(e)}"}],
@@ -453,7 +453,7 @@ class OpenAIClient:
                     # Add tool results to conversations
                     if tool_results_openai:
                         openai_messages.extend(tool_results_openai)
-                        messages.append({"role": "user", "content": tool_results_bedrock})
+                        messages.append({"role": "user", "content": tool_results_tool})
                         return_obj["history"] = messages
 
                         total_result_chars = sum(len(tr.get('content', '')) for tr in tool_results_openai)

@@ -38,7 +38,7 @@ flowchart TB
   end
 
   subgraph llm [LLM]
-  Infer[Schema inference invoke_bedrock_text]
+  Infer[Schema inference invoke_text]
   end
 
   frontend --> flask

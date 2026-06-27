@@ -39,7 +39,7 @@ def register_query_tools(mcp, mongo_server, llm_client, endpoint_tools: dict) ->
     ----------
     mcp           : FastMCP instance
     mongo_server  : MongoDBQueryServer — executes MongoDB queries
-    llm_client    : ServerBedrockClient — used for generate_embedding
+    llm_client    : ServerLlmClientBase — used for generate_embedding
     endpoint_tools: dict from MongoDB config (middleware.endpoint_tools)
 
     Returns

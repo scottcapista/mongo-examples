@@ -49,12 +49,20 @@ class AWSSettings:
         self.mcp_config_col = "mcp_tools"
         self.memory_db = os.getenv('MEMORY_DB', 'mcp_config')
 
-        # LLM model — Bedrock cross-region inference profile ID
-        self.LLM_MODEL_ID = os.getenv('LLM_MODEL_ID', 'global.anthropic.claude-sonnet-4-6')
-        self.LLM_MAX_ITERATIONS = int(os.getenv('LLM_MAX_ITERATIONS', '15'))
+        # LLM — Grove
+        self.LLM_PROVIDER = "grove"
+        self.GROVE_API_KEY = os.getenv("GROVE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+        self.ANTHROPIC_BASE_URL = os.getenv(
+            "ANTHROPIC_BASE_URL",
+            "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
+        ).rstrip("/")
+        self.ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+        self.LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "claude-sonnet-4-6")
+        self.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        self.LLM_MAX_ITERATIONS = int(os.getenv("LLM_MAX_ITERATIONS", "15"))
 
         self.ENABLE_CACHE_POINTS = os.getenv('ENABLE_CACHE_POINTS', 'true').lower() in ['1', 'true', 'yes', 'on']
-        self.ENABLE_BEDROCK_CACHING = True
+        self.ENABLE_LLM_CACHING = True
 
         self.agent_instructions = _MEMORY_AGENT_INSTRUCTIONS
 

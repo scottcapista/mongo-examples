@@ -1,21 +1,14 @@
-"""
-Anthropic Messages API client for MongoDB Grove gateway.
-
-Grove uses the Anthropic API shape with an ``api-key`` header instead of
-``x-api-key``.  Tool-call history is kept in Bedrock Converse shape internally
-so existing MCP / Web UI code paths stay unchanged.
-"""
+"""Anthropic Messages API client for MongoDB Grove gateway."""
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any, Dict, List, Optional
 
 import httpx
 
-from .bedrock_client import BedrockClient
+from .llm_client_base import LlmClientBase
 
 logger = logging.getLogger(__name__)
 
@@ -23,53 +16,55 @@ DEFAULT_GROVE_BASE_URL = (
     "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic"
 )
 
+GROVE_PLACEHOLDER_KEYS = frozenset(
+    {
+        "",
+        "your-grove-api-key-here",
+        "your-anthropic-api-key-here",
+    }
+)
+
+
+def grove_credentials_from_settings(settings) -> str:
+    return (
+        getattr(settings, "GROVE_API_KEY", None)
+        or getattr(settings, "ANTHROPIC_API_KEY", None)
+        or ""
+    ).strip()
+
+
+def is_valid_grove_credentials(key: str) -> bool:
+    return bool(key) and key not in GROVE_PLACEHOLDER_KEYS
+
 
 def normalize_grove_model_id(model_id: str) -> str:
-    """Map Bedrock inference profile IDs to Grove Anthropic model names."""
     if model_id.startswith("global.anthropic."):
         return model_id[len("global.anthropic.") :]
-    if model_id.startswith("us.anthropic."):
-        # e.g. us.anthropic.claude-sonnet-4-20250514-v1:0 — keep as-is unless Grove rejects
-        return model_id
     return model_id
 
 
-def resolve_llm_provider(settings) -> str:
-    explicit = getattr(settings, "LLM_PROVIDER", None) or ""
-    if explicit:
-        return explicit.lower()
-    key = getattr(settings, "GROVE_API_KEY", "") or getattr(settings, "ANTHROPIC_API_KEY", "")
-    if key and key not in ("", "your-grove-api-key-here", "your-anthropic-api-key-here"):
-        return "grove"
-    return "bedrock"
-
-
-class GroveAnthropicClient(BedrockClient):
-    """BedrockClient-compatible LLM client that calls Grove / Anthropic Messages API."""
+class GroveAnthropicClient(LlmClientBase):
+    """LLM client that calls Grove / Anthropic Messages API with MCP tool support."""
 
     def __init__(self, settings):
         super().__init__(settings)
-        self.grove_api_key = (
-            getattr(settings, "GROVE_API_KEY", None)
-            or getattr(settings, "ANTHROPIC_API_KEY", None)
-            or ""
-        )
+        self._grove_credentials = grove_credentials_from_settings(settings)
+        if not is_valid_grove_credentials(self._grove_credentials):
+            raise ValueError("Grove LLM is not configured.")
         base = (
-            getattr(settings, "ANTHROPIC_BASE_URL", None)
-            or DEFAULT_GROVE_BASE_URL
+            getattr(settings, "ANTHROPIC_BASE_URL", None) or DEFAULT_GROVE_BASE_URL
         ).rstrip("/")
         self.grove_messages_url = f"{base}/v1/messages"
         self.anthropic_version = getattr(settings, "ANTHROPIC_VERSION", "2023-06-01")
         self.grove_model_id = normalize_grove_model_id(settings.LLM_MODEL_ID)
         self.grove_max_tokens = int(getattr(settings, "LLM_MAX_TOKENS", 4096))
-        # Grove does not use Bedrock cache points.
-        self.enable_cache_points = False
 
     def _grove_headers(self) -> Dict[str, str]:
         return {
             "Content-Type": "application/json",
             "anthropic-version": self.anthropic_version,
-            "api-key": self.grove_api_key,
+            "api-key": self._grove_credentials,
+            "Ocp-Apim-Subscription-Key": self._grove_credentials,
         }
 
     def _system_text(self) -> Optional[str]:
@@ -104,7 +99,7 @@ class GroveAnthropicClient(BedrockClient):
             )
         return tools
 
-    def _convert_bedrock_messages_to_anthropic(
+    def _convert_tool_messages_to_anthropic(
         self, messages: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         anthropic_messages: List[Dict[str, Any]] = []
@@ -167,14 +162,16 @@ class GroveAnthropicClient(BedrockClient):
 
         return anthropic_messages
 
-    def _anthropic_assistant_to_bedrock(self, content: List[Dict[str, Any]]) -> Dict[str, Any]:
-        bedrock_content: List[Dict[str, Any]] = []
+    def _anthropic_assistant_to_tool_message(
+        self, content: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        tool_content: List[Dict[str, Any]] = []
         for block in content:
             btype = block.get("type")
             if btype == "text":
-                bedrock_content.append({"text": block.get("text", "")})
+                tool_content.append({"text": block.get("text", "")})
             elif btype == "tool_use":
-                bedrock_content.append(
+                tool_content.append(
                     {
                         "toolUse": {
                             "toolUseId": block.get("id", ""),
@@ -183,7 +180,7 @@ class GroveAnthropicClient(BedrockClient):
                         }
                     }
                 )
-        return {"role": "assistant", "content": bedrock_content}
+        return {"role": "assistant", "content": tool_content}
 
     async def _post_messages(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         async with httpx.AsyncClient(timeout=120.0) as client:
@@ -201,7 +198,7 @@ class GroveAnthropicClient(BedrockClient):
                 )
             return response.json()
 
-    async def invoke_bedrock_text(self, prompt: str, system: Optional[str] = None) -> str:
+    async def invoke_text(self, prompt: str, system: Optional[str] = None) -> str:
         payload: Dict[str, Any] = {
             "model": self.grove_model_id,
             "max_tokens": min(self.grove_max_tokens, 1024),
@@ -218,10 +215,10 @@ class GroveAnthropicClient(BedrockClient):
                     parts.append(block.get("text", ""))
             return "".join(parts)
         except Exception as e:
-            logger.warning("invoke_bedrock_text (Grove) failed: %s", e)
+            logger.warning("Grove text invocation failed: %s", e)
             return ""
 
-    async def invoke_bedrock_with_tools(self, request: Dict[str, Any]) -> Dict[str, Any]:
+    async def invoke_with_tools(self, request: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(request, dict):
             return {"history": [], "usage": None, "error": "Invalid request: must be a dict"}
 
@@ -233,7 +230,7 @@ class GroveAnthropicClient(BedrockClient):
                 "error": "Invalid request: at least one message is required",
             }
 
-        anthropic_messages = self._convert_bedrock_messages_to_anthropic(messages)
+        anthropic_messages = self._convert_tool_messages_to_anthropic(messages)
         anthropic_tools = self._convert_mcp_tools_to_anthropic()
         usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
         return_obj: Dict[str, Any] = {"history": messages, "usage": usage}
@@ -276,8 +273,8 @@ class GroveAnthropicClient(BedrockClient):
                 return_obj["usage"] = usage
 
                 assistant_blocks = data.get("content", [])
-                bedrock_assistant = self._anthropic_assistant_to_bedrock(assistant_blocks)
-                messages.append(bedrock_assistant)
+                tool_assistant = self._anthropic_assistant_to_tool_message(assistant_blocks)
+                messages.append(tool_assistant)
                 anthropic_messages.append(
                     {"role": "assistant", "content": assistant_blocks}
                 )
@@ -311,7 +308,7 @@ class GroveAnthropicClient(BedrockClient):
                     return return_obj
 
                 tool_result_blocks = []
-                bedrock_tool_results = []
+                tool_result_messages = []
 
                 for tu in tool_uses:
                     tool_name = tu.get("name", "")
@@ -341,7 +338,7 @@ class GroveAnthropicClient(BedrockClient):
                             "content": result_text,
                         }
                     )
-                    bedrock_tool_results.append(
+                    tool_result_messages.append(
                         {
                             "toolResult": {
                                 "toolUseId": tool_use_id,
@@ -354,7 +351,7 @@ class GroveAnthropicClient(BedrockClient):
                     anthropic_messages.append(
                         {"role": "user", "content": tool_result_blocks}
                     )
-                    messages.append({"role": "user", "content": bedrock_tool_results})
+                    messages.append({"role": "user", "content": tool_result_messages})
                     return_obj["history"] = messages
                     self._emit_progress(
                         self.message_handler,
@@ -364,7 +361,7 @@ class GroveAnthropicClient(BedrockClient):
                     continue
 
             except Exception as e:
-                logger.error("Unexpected error in invoke_bedrock_with_tools (Grove): %s", e)
+                logger.error("Grove tool invocation failed: %s", e)
                 return_obj["error"] = str(e)
                 return return_obj
 
@@ -404,7 +401,7 @@ class ServerGroveClient(GroveAnthropicClient):
             )
         return {"messages": request_messages}
 
-    async def invoke_bedrock_with_tools(
+    async def invoke_with_tools(
         self,
         prompt: Optional[str] = None,
         context: Optional[str] = None,
@@ -415,4 +412,4 @@ class ServerGroveClient(GroveAnthropicClient):
             context=context,
             messages=messages,
         )
-        return await super().invoke_bedrock_with_tools(request=request)
+        return await super().invoke_with_tools(request=request)

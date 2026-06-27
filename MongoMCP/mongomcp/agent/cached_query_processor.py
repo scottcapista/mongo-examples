@@ -6,12 +6,12 @@ from botocore.exceptions import ClientError
 import requests
 import asyncio
 import mcp.types as mt
-from .webui_bedrock_client import WebUiBedrockClient
+from .webui_grove_client import WebUiGroveClient
 from .tool_router import ToolRouter
 
 from ..mongo_cache import MongoSessionCache
 from ..mongodb_client import MongoDBClient
-from ..memory import build_memory_dispatch, get_memory_bedrock_toolspecs
+from ..memory import build_memory_dispatch, get_memory_toolspecs
 import logging
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("urllib3").setLevel(logging.WARNING) # don't log every API call
@@ -23,7 +23,7 @@ class CachedQueryProcessor:
     """Enhanced QueryProcessor with comprehensive caching support
 
     Implements caching at multiple levels:
-    1. Bedrock message caching with cache points
+    1. Grove message caching with cache points
     2. MCP tool discovery caching
     3. MCP tool response caching
     4. Conversation history caching
@@ -37,8 +37,8 @@ class CachedQueryProcessor:
         self.settings = settings
         self.history = None
         self.message_handler = message_handler or self._handle_message
-        # Bedrock client used by both MCP server and web UI paths.
-        self.llm_client = WebUiBedrockClient(settings)
+        # Grove client used by both MCP server and web UI paths.
+        self.llm_client = WebUiGroveClient(settings)
 
         self.mcp_client = None
         self.endpoint_clients: Dict[str, fastmcp.Client] = {}
@@ -84,9 +84,9 @@ class CachedQueryProcessor:
         # Memory layer — always available regardless of MCP endpoint configuration.
         # Build a MongoDBClient and dispatch table for direct (non-HTTP) memory calls.
         self._memory_db_client = MongoDBClient(settings=settings)
-        # llm_client is used for embedding; assigned after WebUiBedrockClient construction above.
+        # llm_client is used for embedding; assigned after WebUiGroveClient construction above.
         self._memory_fns: Dict[str, Any] = {}  # populated in generate_toolconfig after llm_client ready
-        self._memory_toolspecs = get_memory_bedrock_toolspecs()
+        self._memory_toolspecs = get_memory_toolspecs()
 
         # Session context pre-fetch — runs once per processor instance on first LLM turn.
         self._context_prefetched: bool = False
@@ -131,7 +131,7 @@ class CachedQueryProcessor:
         self.message_handler("All caches cleared", status="Cache Cleared")
 
     async def _execute_mcp_tool_cached_async(self, tool_name: str, tool_input: dict) -> str:
-        """Async MCP tool execution with cache support for BedrockClient tool callbacks."""
+        """Async MCP tool execution with cache support for LlmClientBase tool callbacks."""
 
         # Memory tools are dispatched directly — no HTTP, no cache, always fresh.
         if ToolRouter._is_memory_tool(tool_name) and tool_name in self._memory_fns:
@@ -173,13 +173,13 @@ class CachedQueryProcessor:
         return result
 
     def generate_toolconfig(self) -> list:
-        """Discover and configure Bedrock tools from the MCP server HTTP APIs. Idempotent — no-op if already configured."""
+        """Discover and configure Grove tools from the MCP server HTTP APIs. Idempotent — no-op if already configured."""
         if not self.mcp_tools_config:
             asyncio.run(self._setup_tools_async())
         return self.mcp_tools_config
 
     async def _setup_tools_async(self) -> None:
-        """Fetch endpoints, Bedrock-formatted tools, and collection info from the MCP HTTP APIs.
+        """Fetch endpoints, Grove-formatted tools, and collection info from the MCP HTTP APIs.
 
         Calls /tools_config to list endpoints, then /{endpoint}/llm_tools and
         /{endpoint}/collection_info for each. No MCP session is needed for discovery —
@@ -209,7 +209,7 @@ class CachedQueryProcessor:
             self.message_handler(f"Error fetching endpoint list: {e}", status="Error")
             self.mcp_endpoints = []
 
-        bedrock_tools = []
+        llm_tools = []
         root_frmt = f"{self.settings.mongo_mcp_root}/{{}}/mcp"
 
         _SYSTEM_ENDPOINTS = {"memory", "agent"}
@@ -219,7 +219,7 @@ class CachedQueryProcessor:
         ])
         for name, config, tools, collection_info, agent_prompt in results:
             self.mcp_endpoint_configs[name] = config
-            bedrock_tools.extend(tools)
+            llm_tools.extend(tools)
             self.mongo_collection_info[name] = collection_info
             if agent_prompt:
                 self._agent_prompts[name] = self._normalize_agent_prompt(agent_prompt)
@@ -227,8 +227,8 @@ class CachedQueryProcessor:
         if self.mcp_endpoint_configs:
             self.mcp_client = fastmcp.Client({"mcpServers": self.mcp_endpoint_configs})
 
-        await self._configure_llm_client(bedrock_tools)
-        self.message_handler(f"Using {len(bedrock_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)", status="Tools Ready")
+        await self._configure_llm_client(llm_tools)
+        self.message_handler(f"Using {len(llm_tools)} tools from {len(self.mcp_endpoints)} endpoint(s)", status="Tools Ready")
 
         if self.enable_mcp_tool_caching:
             await self._tool_discovery_cache.set(cache_key, {
@@ -237,7 +237,7 @@ class CachedQueryProcessor:
                 "endpoint_configs": self.mcp_endpoint_configs,
                 "collection_info": self.mongo_collection_info,
                 "agent_prompts": self._agent_prompts,
-                "tools": bedrock_tools,
+                "tools": llm_tools,
             })
 
     async def _fetch_endpoint_data(self, name: str, root_frmt: str) -> tuple:
@@ -293,7 +293,7 @@ class CachedQueryProcessor:
         self.mcp_client = fastmcp.Client({"mcpServers": self.mcp_endpoint_configs}) if self.mcp_endpoint_configs else None
         await self._configure_llm_client(cached.get("tools", []))
 
-    async def _configure_llm_client(self, bedrock_tools: list) -> None:
+    async def _configure_llm_client(self, llm_tools: list) -> None:
         """Set the system prompt, register tools on the LLM client, and initialize the ToolRouter."""
         # Build memory dispatch table now that llm_client is ready (needs embedding capability).
         if not self._memory_fns:
@@ -309,12 +309,12 @@ class CachedQueryProcessor:
 
         # Always include memory toolspecs — deduplicate by name so we don't double-add
         # if the memory endpoint also appears in the HTTP-discovered catalog.
-        existing_names = {t["toolSpec"]["name"] for t in bedrock_tools if "toolSpec" in t}
+        existing_names = {t["toolSpec"]["name"] for t in llm_tools if "toolSpec" in t}
         memory_additions = [
             spec for spec in self._memory_toolspecs
             if spec["toolSpec"]["name"] not in existing_names
         ]
-        all_tools = bedrock_tools + memory_additions
+        all_tools = llm_tools + memory_additions
         if memory_additions:
             logger.info("Injected %d memory toolspecs into tool catalog", len(memory_additions))
 
@@ -340,7 +340,7 @@ class CachedQueryProcessor:
         if db_prompts:
             self._system_prompt = [{"text": t} for t in db_prompts]
         else:
-            fallback = getattr(self.settings, "BEDROCK_SYSTEM_PROMPT_TEXTS", [])
+            fallback = getattr(self.settings, "SYSTEM_PROMPT_TEXTS", [])
             logger.info("No DB strategies loaded; using settings fallback (%d entries)", len(fallback))
             self._system_prompt = [{"text": t} for t in fallback]
         for endpoint_name, agent_prompt in self._agent_prompts.items():
@@ -511,7 +511,7 @@ class CachedQueryProcessor:
     def _trim_history(self, history: list) -> list:
         """Trim history by message count and token budget.
 
-        Keeps conversation start aligned to a user message so Bedrock
+        Keeps conversation start aligned to a user message so Grove
         ordering rules are satisfied.
         """
         max_msgs = getattr(self.settings, 'LLM_MAX_HISTORY', 20)
@@ -595,7 +595,7 @@ class CachedQueryProcessor:
             return 0
         if not isinstance(text, str):
             text = str(text)
-        # Rough heuristic for Bedrock token accounting.
+        # Rough heuristic for Grove token accounting.
         return max(1, len(text) // 4)
 
     def _estimate_history_tokens(self, history: list) -> int:
@@ -663,7 +663,7 @@ class CachedQueryProcessor:
 
     def query_with_mcp_tools(self, question: str, history: Optional[list] = None, user_id: Optional[str] = None, session_id: Optional[str] = None, use_llm_routing: bool = False) -> tuple:
         """
-        Query LLM with MCP tool support using Bedrock's Converse API with caching.
+        Query LLM with MCP tool support using Grove's Converse API with caching.
         This flow is very complex because there are a lot of json formatting paths
         and we want to preserve the ability to cache at multiple levels (tool discovery, tool responses)
         without accidentally caching errors or stale data.
@@ -676,12 +676,12 @@ class CachedQueryProcessor:
         Flow:
           1. Prepare history and append question
           2. Discover/cache MCP tools (generate_toolconfig)
-          3. Invoke Bedrock via Converse API, keeping MCP session open for tool callbacks
+          3. Invoke Grove via Converse API, keeping MCP session open for tool callbacks
              → _invoke (inline coroutine, resets Motor connections, opens MCP session if present)
-               → llm_client.invoke_bedrock_with_tools_text  (WebUiBedrockClient)
-                 → WebUiBedrockClient.invoke_bedrock_with_tools  (formats request)
-                   → BedrockClient.invoke_bedrock_with_tools     (base class, actual API call)
-               → normalize_bedrock_response (WebUiBedrockClient, splits text / jsondata)
+               → llm_client.invoke_with_tools_text  (WebUiGroveClient)
+                 → WebUiGroveClient.invoke_with_tools  (formats request)
+                   → LlmClientBase.invoke_with_tools     (base class, actual API call)
+               → normalize_llm_response (WebUiGroveClient, splits text / jsondata)
           4. Return (answer, jsondata, history)
 
         Returns:
@@ -787,7 +787,7 @@ class CachedQueryProcessor:
             # open/close their own sessions on each call, so we do NOT need the
             # top-level self.mcp_client context manager here.  Opening it would
             # create sessions to every endpoint and the close can hang.
-            result = await self.llm_client.invoke_bedrock_with_tools_text(messages=msgs)
+            result = await self.llm_client.invoke_with_tools_text(messages=msgs)
 
             # If the pattern cache routed to the wrong tool and all tool results
             # came back empty, retry using LLM routing so it can pick the right tool.
@@ -818,7 +818,7 @@ class CachedQueryProcessor:
                         self.mcp_tools_config, self._execute_mcp_tool_cached_async
                     )
                 self._tool_response_cache.reset_connection()
-                result = await self.llm_client.invoke_bedrock_with_tools_text(messages=msgs)
+                result = await self.llm_client.invoke_with_tools_text(messages=msgs)
 
             # Record a PII-free playbook for LLM-routed interactions (non-fatal).
             # Only fires when LLM routing set a pattern; cache hits already have a playbook.
@@ -840,17 +840,17 @@ class CachedQueryProcessor:
             self.message_handler("Response ready, sending to UI...", status="Finalizing")
         except ClientError as error:
             error_code = error.response['Error']['Code']
-            print(f"Bedrock error: {error_code} - {error.response['Error']['Message']}")
+            print(f"Grove error: {error_code} - {error.response['Error']['Message']}")
             if error_code == 'ValidationException':
                 return "Error: Input validation failed", None, self.history, False
             if error_code in ['ExpiredTokenException', 'ExpiredToken']:
                 raise
             return f"Error: {error.response['Error']['Message']}", None, self.history, False
         except Exception as e:
-            print(f"Unexpected error invoking Bedrock: {e}")
+            print(f"Unexpected error invoking Grove: {e}")
             return f"Error: {str(e)}", None, self.history, False
 
-        # If Bedrock detected corrupt history (missing toolResult), clear it before returning.
+        # If Grove detected corrupt history (missing toolResult), clear it before returning.
         if invoke_result.get("clear_history"):
             self.history = []
             logger.warning("History cleared due to corrupt toolResult state.")
@@ -945,7 +945,7 @@ class CachedQueryProcessor:
         """Get cache statistics for monitoring"""
         return {
             "caching_enabled": {
-                "bedrock": self.llm_client.enable_cache_points,
+                "Grove": self.llm_client.enable_cache_points,
                 "mcp_tools": self.enable_mcp_tool_caching,
                 "responses": self.enable_response_caching
             },

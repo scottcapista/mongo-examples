@@ -196,7 +196,7 @@ async def _infer_schema_async(samples: List[Any]) -> Tuple[Dict[str, Any], List[
 
     for attempt, system in enumerate((SCHEMA_SYSTEM, SCHEMA_RETRY_SYSTEM)):
         try:
-            raw = await llm.invoke_bedrock_text(prompt, system=system)
+            raw = await llm.invoke_text(prompt, system=system)
             parsed = _extract_json(raw)
             fields = parsed.get("fields") or []
             sample_records = parsed.get("sample_records") or parsed.get("records") or []

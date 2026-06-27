@@ -1,6 +1,7 @@
 import contextvars
 import logging
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import quote_plus
 from pymongo.errors import PyMongoError
 from pymongo import monitoring
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorCollection, AsyncIOMotorDatabase
@@ -135,6 +136,10 @@ class MongoDBClient:
         result = await collection.update_one(bdoc_filter, bdoc_update, upsert=True)
         return result.upserted_id
 
+    def _mongo_client_kwargs(self) -> Dict[str, int]:
+        """Driver options shared by sync and async clients."""
+        return {"serverSelectionTimeoutMS": self.settings.mongo_timeout()}
+
     def get_mongo_uri(self) -> str:
         """
         Get the complete MongoDB connection URI.
@@ -147,7 +152,9 @@ class MongoDBClient:
         m_url = self.settings.mongo_url()
         if self.db_url:
             m_url = self.db_url
-        str_uri = f"mongodb+srv://{credentials['username']}:{credentials['password']}@{m_url}/"
+        user = quote_plus(credentials["username"])
+        password = quote_plus(credentials["password"])
+        str_uri = f"mongodb+srv://{user}:{password}@{m_url}/"
         return str_uri
 
     def get_current_ip(self) -> str:
@@ -202,7 +209,11 @@ class MongoDBClient:
         """Initialize MongoDB connection using settings.py configuration"""
         ping_result = None
         try:
-            self.client = AsyncIOMotorClient(self.get_mongo_uri(), event_listeners=[_CAPTURE_LISTENER])
+            self.client = AsyncIOMotorClient(
+                self.get_mongo_uri(),
+                event_listeners=[_CAPTURE_LISTENER],
+                **self._mongo_client_kwargs(),
+            )
 
             # Test the connection
             ping_result = await self.client.admin.command('ping')
@@ -226,7 +237,7 @@ class MongoDBClient:
     def sync_connect_to_mongodb(self):
         """Synchronous version of connect_to_mongodb"""
         try:
-            self.client = pymongo.MongoClient(self.get_mongo_uri())
+            self.client = pymongo.MongoClient(self.get_mongo_uri(), **self._mongo_client_kwargs())
             self.client.admin.command('ping')
             self._set_locals()
             self._connection_initialized = True

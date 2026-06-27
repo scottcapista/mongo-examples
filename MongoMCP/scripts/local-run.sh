@@ -24,13 +24,27 @@ echo "==> Checking Atlas connectivity (port 27017)..."
 python3 - <<'PY'
 import os
 import sys
+from urllib.parse import quote_plus
 
+import requests
 from pymongo import MongoClient
 
-user = os.environ["MONGO_USERNAME"]
-pwd = os.environ["MONGO_PASSWORD"]
+def current_public_ip() -> str:
+    try:
+        resp = requests.get("https://checkip.amazonaws.com", timeout=10)
+        resp.raise_for_status()
+        return resp.text.strip()
+    except Exception as exc:
+        return f"(could not detect: {exc})"
+
+public_ip = current_public_ip()
+print(f"Your public IP: {public_ip}")
+
+user = quote_plus(os.environ["MONGO_USERNAME"])
+pwd = quote_plus(os.environ["MONGO_PASSWORD"])
 host = os.environ["MONGO_URL"]
-uri = f"mongodb+srv://{user}:{pwd}@{host}/?serverSelectionTimeoutMS=10000"
+timeout_ms = os.environ.get("MONGO_TIMEOUT_MS", "10000")
+uri = f"mongodb+srv://{user}:{pwd}@{host}/?serverSelectionTimeoutMS={timeout_ms}"
 
 try:
     MongoClient(uri).admin.command("ping")
@@ -38,8 +52,8 @@ except Exception as exc:
     print(f"ERROR: Cannot reach Atlas cluster ({host}): {exc}", file=sys.stderr)
     print("", file=sys.stderr)
     print("Common fixes:", file=sys.stderr)
+    print(f"  - Atlas → Network Access → add IP: {public_ip}", file=sys.stderr)
     print("  - Disable Cloudflare WARP / VPN (blocks outbound :27017)", file=sys.stderr)
-    print("  - Atlas → Network Access → add your current public IP", file=sys.stderr)
     print("  - Resume the cluster if it is paused", file=sys.stderr)
     sys.exit(1)
 

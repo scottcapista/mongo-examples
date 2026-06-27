@@ -3,14 +3,14 @@ import logging
 import inspect
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
-from .webui_bedrock_client import WebUiBedrockClient
+from .webui_grove_client import WebUiGroveClient
 from .tool_router import ToolRouter
 
 logger = logging.getLogger(__name__)
 
 
 class PromptAgent:
-    """Focused sub-agent that runs a Bedrock invoke loop with a specific
+    """Focused sub-agent that runs a Grove invoke loop with a specific
     prompt and an optionally filtered tool set.
 
     Tool calls inside the loop route through the caller-provided mcp_call_fn
@@ -46,11 +46,11 @@ class PromptAgent:
         """
         Parameters
         ----------
-        settings     : Application settings passed to WebUiBedrockClient.
+        settings     : Application settings passed to WebUiGroveClient.
         mcp_call_fn  : Async callable ``(toolname: str, tool_input: dict) -> str``.
                        Should be ``APIQueryProcessor._call_mcp_tool`` so tool calls
                        route through the load balancer to the correct container.
-        tool_catalog : Full list of Bedrock toolSpec dicts available to sub-agents.
+        tool_catalog : Full list of Grove toolSpec dicts available to sub-agents.
                        Caller should exclude ``agent_`` tools to prevent recursion.
         save_fn      : Optional callable ``(data: dict, agent_id: str, tool_name: str,
                        prompt_name: str) -> None``.  When provided, called after every
@@ -138,7 +138,7 @@ class PromptAgent:
         emit_fn: Optional[Callable] = None,
         token: Optional[Any] = None,
     ) -> Dict[str, Any]:
-        """Execute a Bedrock invoke loop and return the result as a dict.
+        """Execute a Grove invoke loop and return the result as a dict.
 
         Shape: ``{"response_text": "...", "usage": {...}, "error"?: "..."}``
 
@@ -199,7 +199,7 @@ class PromptAgent:
             )
 
         # --- 3. Fresh client — isolated from the parent LLM's shared state ---
-        client = WebUiBedrockClient(self.settings)
+        client = WebUiGroveClient(self.settings)
         if emit_fn is not None:
             client.message_handler = emit_fn
         sub_agent_system = [
@@ -237,7 +237,7 @@ class PromptAgent:
         # --- 4. Invoke ---
         output: Dict[str, Any] = {"prompt": prompt}
         try:
-            result = await client.invoke_bedrock_with_tools_text(
+            result = await client.invoke_with_tools_text(
                 prompt=full_prompt,
                 context=context_str,
             )
