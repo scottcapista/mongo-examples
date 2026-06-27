@@ -38,16 +38,9 @@ This value must be set in both places:
 - `MongoMCP/local_settings.py`
 - `MongoMCP/webui/local_settings.py`
 
-The `mongoUrl` value is used by `tools/mongosetup.py` to rewrite `module_info.url` in the seeded `mcp_tools` documents.
-
-For the Web UI, you must also copy the token printed by the setup script into `webui/local_settings.py`:
-
-```python
-self.AUTH_TOKEN = "paste_the_AUTH_TOKEN_value_here"
-```
+Both `local_settings.py` files must point at the same MongoDB cluster. Run `scripts/local-setup.sh` (or `tools/generate_jwt_token.py`) to create a local agent identity and print an `AUTH_TOKEN` line for `.env` / `webui/local_settings.py`.
 
 Run the setup scripts below after setting credentials. You will see an output line in this format:
-See [MongoDB database setup](#mongodb-database-setup) for details on the database setup.
 
 ```bash
 AUTH_TOKEN = "..."
@@ -66,11 +59,8 @@ pip install -e ./mongomcp
 # 3. Install top-level dependencies
 pip install -r requirements.txt
 
-# 4. Seed local MongoDB config data and agent identity
-python tools/mongosetup.py
-
-# 5. Generate the airbnb vectors
-python tools/embedairbnb.py
+# 4. Local setup: agent identity, dataset indexes, and MCP_AUTH_TOKEN in .env
+bash scripts/local-setup.sh
 
 # 5. Run the MCP server
 fastapi run mongo_mcp.py --port 8000
@@ -93,16 +83,24 @@ python app.py
 ## MongoDB database setup
 
 ```bash
-python tools/mongosetup.py
+bash scripts/local-setup.sh
 ```
 
-- create the `mcp_config` database if it does not exist
-- create the `agent_identities`, `mcp_cache`, and `mcp_tools` collections
-- load `tools/mcp_config.mcp_tools.json` into `mcp_config.mcp_tools`
-- replace each `module_info.url` entry with the current local `settings.mongo_url` value
-- generate a default local JWT for `webui_chatuser`
-- upsert the generated metadata into `mcp_config.agent_identities`
-- print the `AUTH_TOKEN = "..."` line for local settings updates
+Or run the steps manually:
+
+```bash
+python tools/setup_admin_datasets.py
+python tools/generate_jwt_token.py --agent-name webui_chatuser
+```
+
+This will:
+
+- connect to your Atlas cluster using `local_settings.py` / `.env` credentials
+- ensure `admin_datasets` / `admin_dataset_records` indexes exist
+- create or read `mcp_config.agent_identities` for `webui_chatuser`
+- print `AUTH_TOKEN = "..."` for `.env` (`MCP_AUTH_TOKEN`) and `webui/local_settings.py`
+
+On first MCP server start, cluster collections are auto-discovered into `admin_datasets` (skips `admin`, `local`, `config`, `mcp_config`).
 
 
 ## Environment Variables
@@ -113,7 +111,7 @@ python tools/mongosetup.py
 |---|---|---|
 | `AWS_REGION` | `us-east-2` | AWS region for Secrets Manager |
 | `MONGO_CREDS` | — | AWS Secrets Manager secret name for MongoDB credentials |
-| `MCP_TOOL_NAME` | `airbnbSearch` | Which tool config to load from MongoDB |
+| `MCP_TOOL_NAME` | *(unset)* | Optional legacy query endpoint name in `mcp_tools`; omit for memory-only mode |
 | `IS_LOCAL` | `true` | `true` = skip Secrets Manager, use hardcoded local creds |
 
 ### Web UI
@@ -152,8 +150,8 @@ make run-webui       # Flask dev server on port 8001
 Equivalent direct commands without `make`:
 
 ```bash
-python tools/mongosetup.py
-fastmcp run mongo_mcp.py --transport http --port 8000
+bash scripts/local-setup.sh
+fastapi run mongo_mcp.py --transport http --port 8000
 cd webui && python app.py
 ```
 
@@ -195,9 +193,9 @@ make deploy-webui    # force ECS redeployment
 Any variable can be overridden on the command line:
 
 ```bash
-make run-mcp MCP_TOOL_NAME=AirbnbSearch
-make run-webui IS_LOCAL=false              # uses prod MCP URL
-make run-containers MONGO_CREDS=prod/mongo MCP_TOOL_NAME=AirbnbSearch
+make run-mcp
+make run-webui IS_LOCAL=false
+make run-containers MONGO_CREDS=prod/mongo
 make publish MCP_VERSION=21 WEBUI_VERSION=6
 ```
 
@@ -216,13 +214,19 @@ The server container installs `mongomcp` only. The WebUI container installs `mon
 
 ---
 
-## Dynamic Tool Configuration
+## Tool layers
 
-The MCP server loads its tool definitions from a MongoDB collection at startup. Each document defines a complete server configuration — which database/collection to query, which tools to expose, their parameters, and index names.
+The MCP server exposes three always-on layers:
 
-See `tools/mcp_config.mcp_tools.json` for the local bootstrap configuration source. The `MCP_TOOL_NAME` environment variable selects which document to load.
+| Mount | Tools |
+|---|---|
+| `/memory/mcp` | Memory (`intake`, `recall`, `reflect`, …), dataset discovery (`discover_cluster_datasets`, `dataset_list`, `dataset_query`) |
+| `/agent/mcp` | `run_prompt` sub-agent |
+| `/{MCP_TOOL_NAME}/mcp` | Optional legacy query tools — only when a matching `mcp_tools` document exists |
 
-### Available tool types
+Cluster datasets are registered automatically on startup. Uploaded datasets are managed via the Admin UI (`/admin/datasets`).
+
+### Legacy query tool types (optional `mcp_tools` config)
 
 | Tool | Description |
 |---|---|
@@ -264,7 +268,8 @@ Then point your client at `http://localhost:8000/sse`.
 ## Troubleshooting
 
 - **AWS auth errors**: confirm `~/.aws/credentials` is valid and the IAM role has Secrets Manager access
-- **Tool discovery empty**: check `MCP_TOOL_NAME` matches a document `Name` field in your config collection
+- **Memory tools missing**: confirm MCP server is running and `GET /memory/llm_tools` returns tools
+- **No datasets listed**: run `POST /admin/datasets/discover` or restart MCP to trigger cluster discovery
 - **Vector dimension mismatch**: embedding dimensions in your index must match the model output (`amazon.titan-embed-text-v2:0` → 1024)
 - **Container can't reach MCP server**: when running WebUI container locally, set `MONGO_MCP_ROOT=http://host.docker.internal:8000`
 - **Any error with an IP address**: connection to MongoDB is not working. check network, or credentials.

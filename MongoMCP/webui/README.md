@@ -4,7 +4,7 @@ This project runs as a single server:
 - Flask backend serves API endpoints: `/query`, `/query/stream`
 - Flask also serves the built frontend from `frontend/dist`
 
-For local development, this UI expects the MCP server to be running separately and the Mongo config data to be initialized by `../tools/mongosetup.py`.
+For local development, the MCP server must be running separately. Run `../scripts/local-setup.sh` once to create the local agent identity and `MCP_AUTH_TOKEN`.
 
 ## Required Local Settings
 
@@ -20,7 +20,13 @@ self._credentials = {
 
 The same `_credentials` values must also be set in `../local_settings.py` so both the MCP server and Web UI point at the same MongoDB cluster.
 
-You must also set the Web UI token from the output of `python ../tools/mongosetup.py`:
+Set the Web UI token from `../scripts/local-setup.sh` or:
+
+```bash
+python ../tools/generate_jwt_token.py --agent-name webui_chatuser
+```
+
+Copy the printed line into `.env` (`MCP_AUTH_TOKEN`) and/or `webui/local_settings.py`:
 
 ```python
 self.AUTH_TOKEN = "paste_the_AUTH_TOKEN_value_here"
@@ -32,8 +38,6 @@ The setup script prints a line in this format:
 AUTH_TOKEN = "..."
 ```
 
-Copy that exact value into `webui/local_settings.py` before starting `python app.py`.
-
 ## Prerequisites
 
 - Python 3.11+
@@ -44,7 +48,7 @@ Copy that exact value into `webui/local_settings.py` before starting `python app
 Run from the repository root (`MongoMCP`):
 
 ```bash
-python tools/mongosetup.py
+bash scripts/local-setup.sh
 pip install -e ../mongomcp[agent]
 pip install -r webui/requirements.txt
 cd webui/frontend
@@ -57,7 +61,7 @@ npm run build
 Start the MCP server from the repository root:
 
 ```bash
-fastmcp run mongo_mcp.py --port 8000
+fastapi run mongo_mcp.py --port 8000
 ```
 
 Then, from `webui`:
@@ -66,7 +70,7 @@ Then, from `webui`:
 python app.py
 ```
 
-If you are using local settings, `python tools/mongosetup.py` is the step that creates the `mcp_config` database, seeds the required collections, and generates the default `webui_chatuser` agent identity.
+`scripts/local-setup.sh` creates `mcp_config.agent_identities` for `webui_chatuser` and ensures admin dataset indexes. Cluster datasets are discovered when the MCP server starts.
 
 ## One-command build and run
 

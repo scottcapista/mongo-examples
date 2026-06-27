@@ -23,7 +23,7 @@ A Model Context Protocol (MCP) server that provides vector search and other capa
 - Text search with Atlas Search
 - Custom aggregation queries
 - MCP protocol compliance for AI agent integration
-- Local setup script for creating `mcp_config`, required collections, tool configs, and a default agent token
+- Local setup script for agent identity, dataset indexes, and memory/dataset MCP tools
 
 **Versions**
    1. simple, single collection single mcp server: [searchmcp](./searchmcp/)
@@ -76,8 +76,8 @@ An interactive client application that connects to MCP servers and uses AWS Bedr
    pip install -r requirements.txt
    pip install -e ./mongomcp
    pip install -r webui/requirements.txt
-   python tools/mongosetup.py
-   fastmcp run mongo_mcp.py --transport http --port 8000
+   bash scripts/local-setup.sh
+   fastapi run mongo_mcp.py --transport http --port 8000
    ```
 
 3. **Run the Web UI without containers:**
@@ -101,8 +101,8 @@ Run the MongoMCP stack locally without Docker:
 
 ```bash
 cd MongoMCP/
-python tools/mongosetup.py
-fastmcp run mongo_mcp.py --transport http --port 8000
+bash scripts/local-setup.sh
+fastapi run mongo_mcp.py --transport http --port 8000
 ```
 
 In a second terminal:
@@ -113,8 +113,9 @@ python app.py
 ```
 
 Notes:
-- `python tools/mongosetup.py` uses local settings by default.
-- It creates the `mcp_config` database, the `agent_identities`, `mcp_cache`, and `mcp_tools` collections, loads `tools/mcp_config.mcp_tools.json`, and seeds a default local agent identity.
+- `scripts/local-setup.sh` uses local settings from `.env` by default.
+- It creates `mcp_config.agent_identities` for `webui_chatuser`, ensures admin dataset indexes, and writes `MCP_AUTH_TOKEN` to `.env`.
+- Cluster datasets are auto-discovered when the MCP server starts.
 - The Web UI runs without containers from `MongoMCP/webui/app.py`.
 
 ## Configuration
