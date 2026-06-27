@@ -17,7 +17,8 @@ from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from local_settings import settings
 #from AWS_settings import settings # change this to use AWS_settings for production
-from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_toolspecs, register_agent_tools, get_agent_toolspecs, __version__ as MCP_VERSION
+from mongomcp import MongoDBQueryServer, MongoMCPMiddleware, MongoTokenVerifier, register_memory_tools, register_query_tools, get_memory_toolspecs, register_agent_tools, get_agent_toolspecs, register_dataset_tools, get_dataset_toolspecs, __version__ as MCP_VERSION
+from mongomcp.datasets.discovery import discover_cluster_datasets as _discover_cluster_datasets
 from mongomcp.llm_factory import create_server_llm_client
 from mongomcp.mongodb_client import query_capture_cv as _mongo_capture_cv, _query_capture_registry as _mongo_capture_registry, set_query_capture_enabled as _set_query_capture_enabled, _CAPTURE_LISTENER as _mongo_capture_listener
 from mongomcp.agent.prompt_agent import PromptAgent
@@ -84,13 +85,21 @@ def setup_from_mongo():
         error = None
         try:
             mongo_middleware = MongoMCPMiddleware(settings)
-            if mongo_middleware.ANNOTATIONS:
-                mongo_server = MongoDBQueryServer(settings)
-                mongo_server.set_config(mongo_middleware.ANNOTATIONS)
+            if not mongo_middleware.mongo_client.sync_connect_to_mongodb():
+                failed = True
+                error = "Could not connect to MongoDB"
+            else:
                 auth_provider = MongoTokenVerifier(mongo_middleware)
+                if mongo_middleware.ANNOTATIONS:
+                    mongo_server = MongoDBQueryServer(settings)
+                    mongo_server.set_config(mongo_middleware.ANNOTATIONS)
+                else:
+                    mongo_server = None
+                    logger.info(
+                        "Starting in memory-only mode (no mcp_tools config for %r)",
+                        settings.TOOL_NAME,
+                    )
                 return
-            failed = True
-            error = "Configuration annotations were empty"
         except ConnectionError as e:
             failed = True
             error = e
@@ -108,6 +117,10 @@ def setup_from_mongo():
     )
     sys.exit(1)
 
+
+def _has_query_endpoint() -> bool:
+    return bool(mongo_middleware and mongo_middleware.ANNOTATIONS)
+
 setup_from_mongo()
 _set_query_capture_enabled(os.environ.get("QUERY_LOGGING", "").lower() in ("1", "true", "yes"))
 
@@ -122,12 +135,20 @@ if not _mcp_auth_enabled:
     logger.info("FastMCP auth in non-strict mode (MCP_AUTH_ENABLED=false) — identity parsed from token, validation skipped")
 
 # Create FastMCP server instance with bearer token authentication
-# this is the mongo tools from config load.
+# Query tools are optional — only registered when mcp_tools config exists.
 llm_client = create_server_llm_client(settings)
 logger.info("LLM provider: %s", "grove")
-mcp = FastMCP("mongodb-vector-server", auth=auth_provider)
-mcp.add_middleware(mongo_middleware)
-_query_dispatch = register_query_tools(mcp, mongo_server, llm_client, mongo_middleware.endpoint_tools)
+mcp = None
+mcp_app = None
+_query_dispatch: Dict[str, Any] = {}
+if _has_query_endpoint():
+    mcp = FastMCP("mongodb-vector-server", auth=auth_provider)
+    mcp.add_middleware(mongo_middleware)
+    _query_dispatch = register_query_tools(
+        mcp, mongo_server, llm_client, mongo_middleware.endpoint_tools
+    )
+else:
+    logger.info("Query MCP endpoint disabled — serving memory, datasets, and agent only")
 
 
 # Separate FastMCP instance for the memory layer — keeps memory tools off the main tool catalog.
@@ -135,6 +156,25 @@ _agent_instructions = getattr(settings, "agent_instructions", None)
 memory_mcp = FastMCP("memory-server", auth=auth_provider, instructions=_agent_instructions or None)
 memory_mcp.add_middleware(mongo_middleware)
 _memory_dispatch = register_memory_tools(memory_mcp, mongo_server, llm_client, settings)
+_dataset_dispatch = register_dataset_tools(memory_mcp, settings)
+
+def _run_initial_dataset_discovery() -> None:
+    """On first cluster connection, register datasets for non-system collections."""
+    try:
+        from mongomcp.datasets.discovery import ensure_dataset_indexes
+
+        ensure_dataset_indexes(settings)
+        summary = _discover_cluster_datasets(settings)
+        logger.info(
+            "Initial cluster dataset discovery: created=%s updated=%s datasets=%s",
+            summary.get("created"),
+            summary.get("updated"),
+            len(summary.get("datasets") or []),
+        )
+    except Exception as exc:
+        logger.warning("Initial cluster dataset discovery failed (non-fatal): %s", exc)
+
+_run_initial_dataset_discovery()
 
 # Agent layer — run_prompt tool, always available like memory.
 agent_mcp = FastMCP("agent-server", auth=auth_provider)
@@ -154,6 +194,10 @@ def _get_agent_tool_catalog():
     # endpoint-loading failure below.
     memory_tools = []
     for t in get_memory_toolspecs():
+        t = copy.deepcopy(t)
+        t["toolSpec"]["name"] = f"memory_{t['toolSpec']['name']}"
+        memory_tools.append(t)
+    for t in get_dataset_toolspecs():
         t = copy.deepcopy(t)
         t["toolSpec"]["name"] = f"memory_{t['toolSpec']['name']}"
         memory_tools.append(t)
@@ -314,14 +358,20 @@ def _make_mcp_call_fn(base_url: str, jwt: str, capture_doc_id: Optional[str] = N
 # We have our tools, mount the mcp to fastapi and setup our fastapi authentication
 # everything after this should be FastAPI endpoints.
 # both of these get registered here, but memory will get its own route below
-mcp_app = mcp.http_app(path=f"/mcp")
+if mcp is not None:
+    mcp_app = mcp.http_app(path="/mcp")
 memory_app = memory_mcp.http_app(path="/mcp")
 agent_app = agent_mcp.http_app(path="/mcp")
 
 
 @asynccontextmanager
 async def _combined_lifespan(app):
-    async with mcp_app.lifespan(app):
+    if mcp_app is not None:
+        async with mcp_app.lifespan(app):
+            async with memory_app.lifespan(app):
+                async with agent_app.lifespan(app):
+                    yield
+    else:
         async with memory_app.lifespan(app):
             async with agent_app.lifespan(app):
                 yield
@@ -383,11 +433,12 @@ def _resolve_tool_callable(tool_obj):
 _TOOL_DISPATCH = {
     **_query_dispatch,
     **_memory_dispatch,
+    **_dataset_dispatch,
 }
 
 # Frozen set of memory tool names — handled with token passthrough so wrappers
 # can derive agent_id internally.
-_MEMORY_TOOL_NAMES = frozenset(_memory_dispatch.keys())
+_MEMORY_TOOL_NAMES = frozenset({**_memory_dispatch, **_dataset_dispatch})
 
 async def tool_handler(token: AccessToken, toolname: str, tool_input: dict) -> dict:
     """Map toolname to the appropriate MCP tool function and execute it.
@@ -459,7 +510,19 @@ async def root_endpoint(token: Annotated[str | None, Depends(get_optional_token)
 async def http_health_check(token: Annotated[str | None, Depends(get_optional_token)]) -> Dict[str, Any]:
     """Regular HTTP GET endpoint for health checks"""
     # always return something or else the load balancer will mark it unhealthy and continue to reload the container
-    failed, server_info = await mongo_server.get_mongo_info(False)
+    if mongo_server is not None:
+        failed, server_info = await mongo_server.get_mongo_info(False)
+    else:
+        connected = mongo_middleware.mongo_client.sync_connect_to_mongodb()
+        server_info = {
+            "mongodb": {
+                "connected": connected,
+                "timestamp": datetime.datetime.now().isoformat(),
+            },
+            "description": "memory-only mode (no query endpoint configured)",
+            "mode": "memory",
+        }
+        failed = not connected
     output = server_info.copy()
     output["version"] = MCP_VERSION
     if not token:
@@ -487,6 +550,11 @@ async def http_get_tools_config(token: Annotated[str, Depends(get_token)]) -> Di
 @app.get(f"/{settings.TOOL_NAME}/collection_info")
 async def http_get_collection_info(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
     """Regular HTTP GET endpoint for collection info"""
+    if not _has_query_endpoint():
+        return JSONResponse(
+            {"error": "Query endpoint not configured. Use GET /memory/collection_info instead."},
+            404,
+        )
     results = await _TOOL_DISPATCH["get_collection_info"]()
     return {"collection_info": results}
 
@@ -494,6 +562,11 @@ async def http_get_collection_info(token: Annotated[str, Depends(get_token)]) ->
 @app.get(f"/{settings.TOOL_NAME}/llm_tools")
 async def http_get_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
     """Returns preformatted Grove toolSpec JSON for the active tool endpoint (MongoDB annotations)."""
+    if not _has_query_endpoint():
+        return JSONResponse(
+            {"error": "Query endpoint not configured. Use GET /memory/llm_tools instead."},
+            404,
+        )
     tools = mongo_middleware.build_tools_from_annotations()
     return {"tools": tools, "count": len(tools)}
 
@@ -501,7 +574,7 @@ async def http_get_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[
 @app.get("/memory/llm_tools")
 async def http_get_memory_llm_tools(token: Annotated[str, Depends(get_token)]) -> Dict[str, Any]:
     """Returns preformatted Grove toolSpec JSON for all memory layer tools."""
-    tools = get_memory_toolspecs()
+    tools = get_memory_toolspecs() + get_dataset_toolspecs()
     return {"tools": tools, "count": len(tools)}
 
 
@@ -537,6 +610,11 @@ async def route_tools(body: Dict[str, Any], token: Annotated[str, Depends(get_to
 
     The routing prompt is read from mongo config at prompts.tool_router if it exists.
     """
+    if not _has_query_endpoint():
+        return JSONResponse(
+            {"error": "Query endpoint not configured. Use memory and dataset tools via /memory/mcp."},
+            404,
+        )
     all_tools = mongo_middleware.build_tools_from_annotations()
     question = body.get("question")
     explicit_tools = body.get("tools")
@@ -551,7 +629,7 @@ async def route_tools(body: Dict[str, Any], token: Annotated[str, Depends(get_to
         # LLM routing
         routing_prompt = (
             mongo_server.tool_config.get("prompts", {}).get("tool_router")
-            if hasattr(mongo_server, "tool_config") else None
+            if mongo_server is not None and hasattr(mongo_server, "tool_config") else None
         )
         router = ToolRouter(tool_catalog=all_tools, llm_client=llm_client)
         filtered = await router.route_for_question(question, routing_prompt)
@@ -597,6 +675,12 @@ async def invoke_llm_old(prompt_name: str, body: Dict[str, Any],
             token.get("agent_key"),
         )
         raise HTTPException(status_code=403, detail="Insufficient scope")
+
+    if not _has_query_endpoint() or mongo_server is None:
+        return JSONResponse(
+            {"error": "Query prompts require an mcp_tools endpoint configuration."},
+            404,
+        )
 
     context = body.get("context")
     output = {
@@ -714,6 +798,12 @@ async def invoke_llm(prompt_name: str, body: Dict[str, Any],
     """
     if "llm:invoke" not in token.get("scope", []):
         raise HTTPException(status_code=403, detail="Insufficient scope")
+
+    if not _has_query_endpoint() or mongo_server is None:
+        return JSONResponse(
+            {"error": "Query prompts require an mcp_tools endpoint configuration."},
+            404,
+        )
 
     session_id = get_request_id(request)
     context = body.get("context")
@@ -851,7 +941,8 @@ async def vectorize_text(body: Dict[str, Any],
 
 
 # now that all the other API endpoints are established, lets add our mcp routes to the fastapi app.
-app.mount(f"/{settings.TOOL_NAME}", mcp_app)
+if mcp_app is not None:
+    app.mount(f"/{settings.TOOL_NAME}", mcp_app)
 app.mount("/memory", memory_app)
 app.mount("/agent", agent_app)
 
@@ -868,7 +959,11 @@ def main():
     """
     #mcp.run(transport="sse", host="0.0.0.0", port=8001)
     #mcp.run(transport="sse",  port=8001) # this is for local IDE/Cline integration
-    mcp.run(transport="http", host="0.0.0.0", port=8000, log_level="warning") # this is for AWS containers
+    if mcp is not None:
+        mcp.run(transport="http", host="0.0.0.0", port=8000, log_level="warning") # this is for AWS containers
+    else:
+        import uvicorn
+        uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
 
 
 if __name__ == "__main__":

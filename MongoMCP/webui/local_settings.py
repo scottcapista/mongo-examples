@@ -20,8 +20,16 @@ class LocalSettings:
         self.mcp_config_db = "mcp_config"
         self.mcp_config_col = "mcp_tools"
 
-        # LLM model — Bedrock cross-region inference profile ID
-        self.LLM_MODEL_ID = os.getenv('LLM_MODEL_ID', 'global.anthropic.claude-sonnet-4-6')
+        # LLM — Grove (Anthropic via MongoDB gateway)
+        self.LLM_PROVIDER = "grove"
+        self.GROVE_API_KEY = os.getenv("GROVE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+        self.ANTHROPIC_BASE_URL = os.getenv(
+            "ANTHROPIC_BASE_URL",
+            "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
+        ).rstrip("/")
+        self.ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+        self.LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "claude-sonnet-4-6")
+        self.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
 
         # Embedding model
         self.EMBEDDING_MODEL_ID = "voyage-4"
@@ -35,7 +43,6 @@ class LocalSettings:
         self.LLM_MAX_HISTORY = int(os.getenv('LLM_MAX_HISTORY', '20'))
 
         self.ENABLE_CACHE_POINTS = os.getenv('ENABLE_CACHE_POINTS', 'true').lower() in ['1', 'true', 'yes', 'on']
-        self.ENABLE_BEDROCK_CACHING = True
         self.ENABLE_MCP_TOOL_CACHING = False
         self.ENABLE_RESPONSE_CACHING = False
         self.CACHE_TTL = 300

@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 _MEMORY_TOOLS = {
     "intake", "recall", "reflect", "query", "list_sessions",
     "schema_declare", "strategy_store", "strategy_recall", "get_instructions",
+    # Dataset discovery + generic query tools (registered on memory_mcp).
+    "discover_cluster_datasets", "dataset_list", "dataset_query",
     # Agent tools — registered on agent_mcp, pass through middleware security gate.
     "run_prompt",
 }
@@ -54,6 +56,26 @@ class MongoMCPMiddleware(Middleware):
                 # load the config for this specific tool, then we load it for everything so we can return all tools on the shared endpoint
                 # make 2 calls because we need this config regardless of active state
                 doc = self.mongo_client.get_collection().find_one({"Name": self.endpoint_name})
+                if not doc:
+                    available = []
+                    try:
+                        available = list(
+                            self.mongo_client.get_collection().distinct("Name")
+                        )
+                    except Exception:
+                        pass
+                    logger.info(
+                        "No mcp_tools document for Name=%r — query endpoint disabled; "
+                        "memory, dataset, and agent tools remain available. "
+                        "Configured names in mcp_tools: %s. "
+                        "Unset MCP_TOOL_NAME or set it to a valid Name to enable query tools.",
+                        self.endpoint_name,
+                        available or "(none)",
+                    )
+                    self.ANNOTATIONS = None
+                    self.endpoint_tools = {}
+                    self.active_endpoints = ["memory", "agent"]
+                    return None
                 self.ANNOTATIONS = doc
                 self.endpoint_tools = self.ANNOTATIONS.get('tools', {})
                 #### load all active endpoints to return configs

@@ -22,7 +22,17 @@ export default function DatasetList({ onSelect, onNew }) {
         const res = await fetch(`${API_URL}/admin/datasets`)
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to load datasets')
-        if (!cancelled) setDatasets(data.datasets || [])
+        if (!cancelled) {
+          const items = (data.datasets || []).map((ds) => ({
+            ...ds,
+            index_summary: ds.index_summary || (ds.indexes ? {
+              database: ds.indexes.database_index_count || 0,
+              search: ds.indexes.search_index_count || 0,
+              vector: ds.indexes.vector_index_count || 0,
+            } : null),
+          }))
+          setDatasets(items)
+        }
       } catch (e) {
         if (!cancelled) setError(String(e))
       } finally {
@@ -69,7 +79,10 @@ export default function DatasetList({ onSelect, onNew }) {
                 {ds.description || 'No description'}
               </p>
               <span className="dataset-card__meta">
-                {ds.record_count ?? 0} records · {ds.owner}
+                {ds.source_type === 'cluster' ? 'Cluster' : 'Upload'} · {ds.record_count ?? 0} records · {ds.owner}
+                {ds.index_summary && (
+                  <> · idx {ds.index_summary.database}/{ds.index_summary.search}/{ds.index_summary.vector}</>
+                )}
               </span>
             </button>
           ))}

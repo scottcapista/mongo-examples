@@ -29,6 +29,7 @@ from .mongodb_client import MongoDBClient
 from .memory import register_memory_tools, get_memory_toolspecs
 from .tools import register_query_tools
 from .agent import register_agent_tools, get_agent_toolspecs
+from .datasets import register_dataset_tools, get_dataset_toolspecs
 
 __version__ = "3.2.0"
 
@@ -44,4 +45,6 @@ __all__ = [
    "register_query_tools",
    "register_agent_tools",
    "get_agent_toolspecs",
+   "register_dataset_tools",
+   "get_dataset_toolspecs",
 ]
