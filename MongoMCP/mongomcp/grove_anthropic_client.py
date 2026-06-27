@@ -50,7 +50,9 @@ class GroveAnthropicClient(LlmClientBase):
         super().__init__(settings)
         self._grove_credentials = grove_credentials_from_settings(settings)
         if not is_valid_grove_credentials(self._grove_credentials):
-            raise ValueError("Grove LLM is not configured.")
+            raise ValueError(
+                "Grove LLM is not configured. Set GROVE_API_KEY (or ANTHROPIC_API_KEY) in MongoMCP/.env"
+            )
         base = (
             getattr(settings, "ANTHROPIC_BASE_URL", None) or DEFAULT_GROVE_BASE_URL
         ).rstrip("/")

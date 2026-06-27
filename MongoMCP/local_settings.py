@@ -33,8 +33,8 @@ class LocalSettings:
     def __init__(self):
         self.aws_region = os.getenv('AWS_REGION', 'us-east-1')
 
-        # Name of the MCP tool group served by this instance (matches mcp_tools collection key)
-        self.TOOL_NAME = os.getenv('MCP_TOOL_NAME', 'AirbnbSearch')
+        # Optional legacy query endpoint (mcp_tools.Name). Empty → memory-only mode.
+        self.TOOL_NAME = os.getenv('MCP_TOOL_NAME', '').strip() or 'memory'
 
         self.IS_LOCAL = json.loads(os.getenv('IS_LOCAL', 'true').lower())
 
@@ -53,12 +53,19 @@ class LocalSettings:
         self.mcp_config_col = "mcp_tools"
         self.memory_db = os.getenv('MEMORY_DB', 'mcp_config')
 
-        # LLM model — Bedrock cross-region inference profile ID
-        self.LLM_MODEL_ID = os.getenv('LLM_MODEL_ID', 'global.anthropic.claude-sonnet-4-6')
-        self.LLM_MAX_ITERATIONS = int(os.getenv('LLM_MAX_ITERATIONS', '15'))
+        # LLM — Grove (Anthropic via MongoDB gateway)
+        self.LLM_PROVIDER = "grove"
+        self.GROVE_API_KEY = os.getenv("GROVE_API_KEY") or os.getenv("ANTHROPIC_API_KEY", "")
+        self.ANTHROPIC_BASE_URL = os.getenv(
+            "ANTHROPIC_BASE_URL",
+            "https://grove-gateway-prod.azure-api.net/grove-foundry-prod/anthropic",
+        ).rstrip("/")
+        self.ANTHROPIC_VERSION = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
+        self.LLM_MODEL_ID = os.getenv("LLM_MODEL_ID", "claude-sonnet-4-6")
+        self.LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        self.LLM_MAX_ITERATIONS = int(os.getenv("LLM_MAX_ITERATIONS", "15"))
 
         self.ENABLE_CACHE_POINTS = os.getenv('ENABLE_CACHE_POINTS', 'true').lower() in ['1', 'true', 'yes', 'on']
-        self.ENABLE_BEDROCK_CACHING = True
 
         # Static auth token for the MCP server (generate via the MCP server's token endpoint)
         self.AUTH_TOKEN = os.getenv('MCP_AUTH_TOKEN', 'your-static-jwt-token-here')

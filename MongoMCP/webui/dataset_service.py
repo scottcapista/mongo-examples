@@ -242,10 +242,9 @@ def _normalize_record(raw: Any, schema: Dict[str, Any], llm_normalized: Optional
 
 
 def list_datasets() -> List[Dict[str, Any]]:
-    db = _get_db()
-    col = db.get_collection(DATASETS_COL)
-    docs = list(col.find().sort("created_at", -1))
-    return [_serialize_doc(d) for d in docs]
+    from mongomcp.datasets.service import list_datasets as _list
+
+    return _list(settings)
 
 
 def get_dataset(dataset_id: str) -> Optional[Dict[str, Any]]:
@@ -365,6 +364,7 @@ def ingest_dataset(
         "description": (description or "").strip(),
         "category": category,
         "owner": owner.strip(),
+        "source_type": "upload",
         "schema": schema,
         "record_count": 0,
         "created_at": now,
@@ -439,9 +439,6 @@ def ingest_dataset(
 
 
 def ensure_indexes() -> None:
-    db = _get_db()
-    datasets_col = db.get_collection(DATASETS_COL)
-    records_col = db.get_collection(RECORDS_COL)
-    datasets_col.create_index([("category", 1)])
-    datasets_col.create_index([("owner", 1)])
-    records_col.create_index([("dataset_id", 1), ("row_index", 1)])
+    from mongomcp.datasets.discovery import ensure_dataset_indexes
+
+    ensure_dataset_indexes(settings)

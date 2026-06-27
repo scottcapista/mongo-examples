@@ -5,6 +5,7 @@ from flask import Flask, send_from_directory, request, jsonify, abort, Response
 from flask_cors import CORS
 import requests
 from mcp_processor import APIQueryProcessor, QueryResponse, QueryRequest
+from local_settings import settings
 from dataset_service import (
     list_datasets,
     get_dataset,
@@ -13,6 +14,7 @@ from dataset_service import (
     ingest_dataset,
     ensure_indexes,
 )
+from mongomcp.datasets.discovery import discover_cluster_datasets
 from mongomcp import __version__ as MCP_VERSION
 import mimetypes
 import traceback
@@ -329,6 +331,19 @@ def _parse_upload_params():
     text = (payload.get("text") or "").strip()
     raw_content = text if text else None
     return name, description, category, username, raw_content, ""
+
+
+@app.route('/admin/datasets/discover', methods=['POST'])
+def admin_discover_datasets():
+    """Scan cluster collections and register datasets (skips admin/local/config/mcp_config)."""
+    try:
+        payload = request.get_json(force=True, silent=True) or {}
+        force_refresh = bool(payload.get("force_refresh"))
+        summary = discover_cluster_datasets(settings, force_refresh=force_refresh)
+        return jsonify(summary), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/admin/datasets', methods=['GET'])
