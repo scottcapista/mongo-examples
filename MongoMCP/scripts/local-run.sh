@@ -85,8 +85,12 @@ until curl -sf --max-time 3 http://127.0.0.1:8000/health >/dev/null 2>&1; do
 done
 echo "MCP server ready"
 
+echo "==> Building frontend"
+cd "$ROOT/webui/frontend"
+npm run build
+cd "$ROOT/webui"
+
 echo "==> Starting Web UI on :8001"
-cd webui
 # Avoid Flask debug reloader spawning a second process on the same port.
 export FLASK_DEBUG="${FLASK_DEBUG:-0}"
 python app.py

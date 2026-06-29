@@ -68,6 +68,17 @@ class AWSSettings:
         # Overridden by Cognito if COGNITO_CLIENT_ID / COGNITO_USERNAME / COGNITO_PASSWORD are set.
         self.AUTH_TOKEN = os.getenv('MCP_AUTH_TOKEN', 'your-static-jwt-token-here')
 
+        # OIDC user login (Flask REST /auth/*)
+        self.OIDC_ISSUER = os.getenv('OIDC_ISSUER', '')
+        self.OIDC_CLIENT_ID = os.getenv('OIDC_CLIENT_ID', '')
+        self.OIDC_CLIENT_SECRET = os.getenv('OIDC_CLIENT_SECRET', '')
+        self.OIDC_REDIRECT_URI = os.getenv('OIDC_REDIRECT_URI', '')
+        self.OIDC_SCOPES = os.getenv('OIDC_SCOPES', 'openid profile email')
+        self.SESSION_SECRET = os.getenv('SESSION_SECRET', '')
+        self.AUTH_REQUIRED = os.getenv('AUTH_REQUIRED', 'true').lower() in (
+            '1', 'true', 'yes', 'on'
+        )
+
         # Optional Cognito auth — takes precedence over AUTH_TOKEN when all three vars are set.
         _cognito_client_id = os.getenv('COGNITO_CLIENT_ID')
         _cognito_username  = os.getenv('COGNITO_USERNAME')

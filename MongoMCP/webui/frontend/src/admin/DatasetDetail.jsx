@@ -37,16 +37,6 @@ export default function DatasetDetail({ datasetId, username, onBack }) {
     loadPage(1)
   }, [loadPage])
 
-  function handleRecordSaved(updated) {
-    setData((prev) => {
-      if (!prev) return prev
-      return {
-        ...prev,
-        records: prev.records.map((r) => (r.id === updated.id ? { ...r, ...updated, markdown: updated.markdown } : r)),
-      }
-    })
-  }
-
   if (loading && !data) {
     return <div className="admin-loading">Loading dataset…</div>
   }
@@ -83,16 +73,13 @@ export default function DatasetDetail({ datasetId, username, onBack }) {
       {loading && <p className="admin-loading-inline">Loading page…</p>}
 
       <div className="record-list">
-        {(data?.records || []).map((record) => (
-          <RecordCard
-            key={record.id}
-            record={record}
-            datasetId={datasetId}
-            username={username}
-            owner={ds?.owner}
-            onSaved={handleRecordSaved}
-          />
-        ))}
+        {(data?.records || []).length === 0 && !loading ? (
+          <p className="dataset-list__empty">No records found for this dataset.</p>
+        ) : (
+          (data?.records || []).map((record) => (
+            <RecordCard key={record.id} record={record} />
+          ))
+        )}
       </div>
 
       {data && data.total_pages > 1 && (

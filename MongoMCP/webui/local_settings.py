@@ -61,6 +61,21 @@ class LocalSettings:
         # Static auth token for the MCP server
         self.AUTH_TOKEN = os.getenv('MCP_AUTH_TOKEN', 'your-static-jwt-token-here')
 
+        # OIDC (Workforce / Okta) — Web UI user login via Flask REST /auth/*
+        self.OIDC_ISSUER = os.getenv('OIDC_ISSUER', '')
+        self.OIDC_CLIENT_ID = os.getenv('OIDC_CLIENT_ID', '')
+        self.OIDC_CLIENT_SECRET = os.getenv('OIDC_CLIENT_SECRET', '')
+        self.OIDC_REDIRECT_URI = os.getenv(
+            'OIDC_REDIRECT_URI', 'http://localhost:8001/auth/callback'
+        )
+        self.OIDC_SCOPES = os.getenv('OIDC_SCOPES', 'openid profile email')
+        self.SESSION_SECRET = os.getenv(
+            'SESSION_SECRET', 'dev-change-me-in-production'
+        )
+        self.AUTH_REQUIRED = os.getenv('AUTH_REQUIRED', 'false').lower() in (
+            '1', 'true', 'yes', 'on'
+        )
+
         # Voyage AI API key (only needed if EMBEDDING_MODEL_ID starts with "voyage-" and you run locally
         # without Atlas Data API embedding; typically stored in your MongoDB secret in production)
         self.VOYAGE_AI_KEY = os.getenv('VOYAGE_AI_KEY', 'your-voyage-api-key-here')

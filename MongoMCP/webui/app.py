@@ -1,11 +1,21 @@
 import os
 import logging
 import time
-from flask import Flask, send_from_directory, request, jsonify, abort, Response
+from flask import Flask, send_from_directory, request, jsonify, abort, Response, redirect as flask_redirect
 from flask_cors import CORS
 import requests
 from mcp_processor import APIQueryProcessor, QueryResponse, QueryRequest
 from local_settings import settings
+from auth.oidc import (
+    auth_required,
+    clear_user_session,
+    get_user_from_session,
+    handle_callback,
+    is_oidc_configured,
+    resolve_query_identity,
+    start_login,
+    user_session_to_dict,
+)
 from dataset_service import (
     list_datasets,
     get_dataset,
@@ -14,11 +24,13 @@ from dataset_service import (
     ingest_dataset,
     ensure_indexes,
 )
+from user_memory_service import list_user_memories
+from access_log import apply_cache_headers, configure_access_logging, log_request
 from mongomcp.datasets.discovery import discover_cluster_datasets
 from mongomcp import __version__ as MCP_VERSION
 import mimetypes
 import traceback
-from typing import Optional, List, Any
+from typing import Optional, List, Any, Tuple
 import threading
 import json
 import queue
@@ -26,11 +38,32 @@ import queue
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("mcp.client.streamable_http").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
+configure_access_logging()
 
 mimetypes.add_type('application/javascript', '.js')
 
 app = Flask(__name__, static_folder=os.path.join(os.path.dirname(__file__), 'frontend', 'dist'))
-CORS(app)
+app.secret_key = settings.SESSION_SECRET or os.urandom(24)
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "").lower() in ("1", "true", "yes"),
+)
+CORS(app, supports_credentials=True)
+
+
+@app.before_request
+def _access_log_start():
+    request._access_start = time.perf_counter()
+
+
+@app.after_request
+def _access_log_finish(response):
+    elapsed_ms = (time.perf_counter() - request._access_start) * 1000 if hasattr(request, "_access_start") else 0.0
+    response = apply_cache_headers(request, response)
+    log_request(request, response, elapsed_ms)
+    return response
+
 
 processor = APIQueryProcessor()
 _site_warmup_lock = threading.Lock()
@@ -80,7 +113,63 @@ def health():
         "status": "ok",
         "version": MCP_VERSION,
         "processor_ready": processor.init_error is None,
+        "auth_required": auth_required(),
+        "oidc_configured": is_oidc_configured(),
     }), 200
+
+
+def _build_query_request(payload: dict) -> Tuple[Optional[QueryRequest], Optional[Tuple[dict, int]]]:
+    """Build QueryRequest with OIDC identity when session is present."""
+    user_id, username, err = resolve_query_identity(payload)
+    if err:
+        return None, err
+    q = (payload.get("input", "") or "").strip()
+    if not q:
+        return None, ({"error": "Empty input"}, 400)
+    return QueryRequest(
+        input=q,
+        history=payload.get("history", []),
+        user_id=user_id,
+        username=username,
+        session_id=payload.get("session_id"),
+    ), None
+
+
+@app.route('/auth/login', methods=['GET'])
+def auth_login():
+    if not is_oidc_configured():
+        return jsonify({"error": "OIDC is not configured"}), 503
+    return start_login()
+
+
+@app.route('/auth/callback', methods=['GET'])
+def auth_callback():
+    if not is_oidc_configured():
+        return jsonify({"error": "OIDC is not configured"}), 503
+    code = request.args.get("code")
+    state = request.args.get("state")
+    if not code or not state:
+        return jsonify({"error": "Missing code or state"}), 400
+    try:
+        handle_callback(code, state)
+    except Exception as exc:
+        app.logger.exception("OIDC callback failed")
+        return jsonify({"error": str(exc)}), 400
+    return flask_redirect("/")
+
+
+@app.route('/auth/logout', methods=['GET', 'POST'])
+def auth_logout():
+    clear_user_session()
+    return flask_redirect("/")
+
+
+@app.route('/auth/me', methods=['GET'])
+def auth_me():
+    user = get_user_from_session()
+    if not user:
+        return jsonify({"error": "Not authenticated"}), 401
+    return jsonify(user_session_to_dict(user)), 200
 
 
 @app.route('/query', methods=['POST'])
@@ -93,11 +182,10 @@ def api_query():
         if processor.init_error:
             raise ValueError(f"Processor initialization failed: {processor.init_error}")
 
-        q = (payload.get("input", "") or "").strip()
-        if not q:
-            raise ValueError("Empty input")
+        req, err = _build_query_request(payload)
+        if err:
+            return jsonify(err[0]), err[1]
 
-        req = QueryRequest(input=q, history=payload.get("history", []), user_id=payload.get("user_id"), username=payload.get("username"), session_id=payload.get("session_id"))
         resp = processor.query_with_mcp_tools(req).json()
         code = 200
 
@@ -111,11 +199,15 @@ def api_query():
 @app.route('/query/stream', methods=['POST'])
 def stream_query():
     """Stream the response for long-running queries."""
-    # Read request payload here while request context is active
     try:
         payload = request.get_json(force=True)
-        # Pass a copy of payload into generator to avoid accessing `request` inside it
-        return Response(generate(payload), mimetype='application/x-ndjson')
+        user_id, username, err = resolve_query_identity(payload)
+        if err:
+            return jsonify(err[0]), err[1]
+        return Response(
+            generate(payload, user_id=user_id, username=username),
+            mimetype='application/x-ndjson',
+        )
     except Exception as e:
         return jsonify({'error': str(e)}), 400
 
@@ -169,7 +261,7 @@ def record_feedback():
         traceback.print_exc()
         return jsonify(QueryResponse(status="Error", error=str(e)).json()), 500
 
-def generate(payload):
+def generate(payload, user_id=None, username=None):
     try:
         if processor.init_error:
             yield QueryResponse(error=f"Processor initialization failed: {processor.init_error}").json() + '\n'
@@ -179,6 +271,12 @@ def generate(payload):
         if not q:
             yield QueryResponse(status="Error", error="Empty input").json() + '\n'
             return
+
+        if user_id is None and username is None:
+            user_id, username, err = resolve_query_identity(payload)
+            if err:
+                yield json.dumps(err[0]) + '\n'
+                return
 
         local_queue = queue.Queue()
 
@@ -247,7 +345,13 @@ def generate(payload):
         exception = None
 
         yield QueryResponse(status='querying', message='Querying Claude with MCP tools...').json() + '\n'
-        req = QueryRequest(input=q, history=payload.get("history", []), user_id=payload.get("user_id"), username=payload.get("username"), session_id=payload.get("session_id"))
+        req = QueryRequest(
+            input=q,
+            history=payload.get("history", []),
+            user_id=user_id,
+            username=username,
+            session_id=payload.get("session_id"),
+        )
         for item in execute_in_thread(lambda: processor.query_with_mcp_tools(req, emit=emit_local)):
             if isinstance(item, tuple):
                 result, exception = item
@@ -331,6 +435,37 @@ def _parse_upload_params():
     text = (payload.get("text") or "").strip()
     raw_content = text if text else None
     return name, description, category, username, raw_content, ""
+
+
+@app.route('/admin/user-memory', methods=['GET'])
+def admin_list_user_memory():
+    """List memories for the authenticated user (filtered by session email)."""
+    try:
+        user = get_user_from_session()
+        if not user:
+            if auth_required():
+                return jsonify({"error": "Authentication required"}), 401
+            return jsonify({"error": "Sign in to view your memories"}), 401
+
+        page = request.args.get("page", 1, type=int)
+        limit = request.args.get("limit", 20, type=int)
+        collection = (request.args.get("collection") or "all").strip().lower()
+        memory_type = (request.args.get("memory_type") or "").strip() or None
+        session_id = (request.args.get("session_id") or "").strip() or None
+
+        return jsonify(list_user_memories(
+            user.email,
+            page=page,
+            limit=limit,
+            collection=collection,
+            memory_type=memory_type,
+            session_id=session_id,
+        )), 200
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route('/admin/datasets/discover', methods=['POST'])
@@ -441,7 +576,9 @@ def serve(path):
     index_path = os.path.join(static_folder, 'index.html')
     if os.path.exists(index_path):
         _warmup_tool_discovery_once()
-        return send_from_directory(static_folder, 'index.html')
+        response = send_from_directory(static_folder, 'index.html')
+        response.headers["Cache-Control"] = "no-cache"
+        return response
     return "Frontend not found. you must first build the project.", 404
 
 

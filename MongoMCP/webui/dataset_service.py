@@ -12,9 +12,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from bson import ObjectId
+from bson import ObjectId, json_util
 
 from local_settings import settings
+from mongomcp.datasets.constants import SOURCE_CLUSTER
 from mongomcp.llm_factory import create_webui_llm_client
 from mongomcp.mongodb_client import MongoDBClient
 
@@ -28,6 +29,15 @@ BATCH_SIZE = 100
 SAMPLE_SIZE = 15
 SAMPLE_TRUNCATE = 2048
 FIELD_VALUE_MAX = 10_240
+EMBEDDING_FIELD_NAMES = frozenset({
+    "embedding",
+    "embeddings",
+    "embeddedat",
+    "embeddinghash",
+    "embeddingmodel",
+    "embeddingtext",
+})
+EMBEDDING_VECTOR_MIN_LEN = 32
 
 SCHEMA_SYSTEM = """You infer a normalized document schema for a dataset being loaded into MongoDB.
 Return ONLY valid JSON with this shape (no markdown fences):
@@ -96,33 +106,42 @@ def _truncate_sample(record: Any) -> Any:
     return str(record)[:SAMPLE_TRUNCATE]
 
 
-def data_to_markdown(data: Dict[str, Any]) -> str:
-    lines: List[str] = []
+def _is_embedding_vector(value: Any) -> bool:
+    if not isinstance(value, list) or len(value) < EMBEDDING_VECTOR_MIN_LEN:
+        return False
+    sample = value[:16]
+    return bool(sample) and all(isinstance(x, (int, float)) for x in sample)
 
-    def render(key: str, value: Any, depth: int = 0) -> None:
-        indent = "  " * depth
-        if isinstance(value, dict):
-            lines.append(f"{indent}- **{key}**:")
-            for k, v in value.items():
-                render(k, v, depth + 1)
-        elif isinstance(value, list):
-            lines.append(f"{indent}- **{key}**:")
-            for item in value:
-                if isinstance(item, (dict, list)):
-                    lines.append(f"{indent}  -")
-                    if isinstance(item, dict):
-                        for k, v in item.items():
-                            render(k, v, depth + 2)
-                    else:
-                        lines.append(f"{indent}    {json.dumps(item, default=str)}")
-                else:
-                    lines.append(f"{indent}  - {item}")
-        else:
-            lines.append(f"{indent}**{key}**: {value}")
 
-    for k, v in data.items():
-        render(k, v)
-    return "\n".join(lines) if lines else "_Empty record_"
+def _is_embedding_field_name(name: str) -> bool:
+    lower = name.lower()
+    if lower in EMBEDDING_FIELD_NAMES:
+        return True
+    return lower.startswith("embedding") or lower.endswith("embedding")
+
+
+def sanitize_display_data(value: Any) -> Any:
+    """Remove embedding vectors and related metadata from display payloads."""
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for key, item in value.items():
+            if _is_embedding_field_name(key):
+                continue
+            if _is_embedding_vector(item):
+                continue
+            cleaned = sanitize_display_data(item)
+            if cleaned is not None:
+                out[key] = cleaned
+        return out
+    if isinstance(value, list):
+        return [
+            cleaned
+            for item in value
+            if not _is_embedding_vector(item)
+            for cleaned in [sanitize_display_data(item)]
+            if cleaned is not None
+        ]
+    return value
 
 
 def parse_raw_input(content: bytes | str, filename: str = "") -> List[Any]:
@@ -254,19 +273,90 @@ def get_dataset(dataset_id: str) -> Optional[Dict[str, Any]]:
     return _serialize_doc(doc) if doc else None
 
 
+def _oid_from_extended(value: Any) -> str:
+    if isinstance(value, dict) and "$oid" in value:
+        return value["$oid"]
+    return str(value) if value is not None else ""
+
+
+def _plain_value(value: Any) -> Any:
+    """Flatten BSON extended JSON for JSON-friendly API responses."""
+    if isinstance(value, dict):
+        if set(value.keys()) == {"$oid"}:
+            return value["$oid"]
+        if set(value.keys()) == {"$date"}:
+            return value["$date"]
+        return {k: _plain_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_plain_value(v) for v in value]
+    return value
+
+
+def _cluster_doc_to_record(doc: Dict[str, Any], row_index: int) -> Dict[str, Any]:
+    plain = json.loads(json_util.dumps(doc))
+    record_id = _oid_from_extended(plain.pop("_id", None))
+    data = sanitize_display_data(_plain_value(plain))
+    return {
+        "id": record_id,
+        "row_index": row_index,
+        "data": data,
+    }
+
+
+def _get_cluster_records(
+    db_client: MongoDBClient,
+    ds: Dict[str, Any],
+    page: int,
+    limit: int,
+) -> Dict[str, Any]:
+    db_name = ds.get("database")
+    coll_name = ds.get("collection")
+    if not db_name or not coll_name:
+        raise ValueError("Cluster dataset is missing database or collection")
+
+    collection = db_client.client[db_name][coll_name]
+    total = ds.get("record_count") or collection.estimated_document_count()
+    skip = (page - 1) * limit
+
+    cursor = (
+        collection.find({})
+        .sort("_id", 1)
+        .skip(skip)
+        .limit(limit)
+    )
+
+    records = []
+    for offset, doc in enumerate(cursor):
+        records.append(_cluster_doc_to_record(doc, skip + offset))
+
+    total_pages = max(1, (total + limit - 1) // limit)
+    return {
+        "dataset": ds,
+        "records": records,
+        "page": page,
+        "limit": limit,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
 def get_records(
     dataset_id: str,
     page: int = 1,
     limit: int = 10,
 ) -> Dict[str, Any]:
-    db = _get_db()
-    col = db.get_collection(RECORDS_COL)
+    db_client = _get_db()
     ds = get_dataset(dataset_id)
     if not ds:
         raise ValueError("Dataset not found")
 
     page = max(1, page)
     limit = max(1, min(limit, 100))
+
+    if ds.get("source_type") == SOURCE_CLUSTER:
+        return _get_cluster_records(db_client, ds, page, limit)
+
+    col = db_client.get_collection(RECORDS_COL)
     total = ds.get("record_count") or col.count_documents({"dataset_id": _oid(dataset_id)})
     skip = (page - 1) * limit
 
@@ -280,9 +370,15 @@ def get_records(
     records = []
     for doc in cursor:
         ser = _serialize_doc(doc)
-        data = ser.get("data") or {}
-        ser["markdown"] = ser.get("display_markdown") or data_to_markdown(data)
-        records.append(ser)
+        data = sanitize_display_data(ser.get("data") or {})
+        record: Dict[str, Any] = {
+            "id": ser["id"],
+            "row_index": ser.get("row_index", 0),
+            "data": data,
+        }
+        if ser.get("display_markdown"):
+            record["display_markdown"] = ser["display_markdown"]
+        records.append(record)
 
     total_pages = max(1, (total + limit - 1) // limit)
     return {
@@ -318,8 +414,14 @@ def patch_record_markdown(
 
     doc = col.find_one({"_id": _oid(record_id)})
     ser = _serialize_doc(doc)
-    ser["markdown"] = ser.get("display_markdown") or data_to_markdown(ser.get("data") or {})
-    return ser
+    data = sanitize_display_data(ser.get("data") or {})
+    result: Dict[str, Any] = {
+        "id": ser["id"],
+        "row_index": ser.get("row_index", 0),
+        "data": data,
+        "display_markdown": display_markdown,
+    }
+    return result
 
 
 def ingest_dataset(

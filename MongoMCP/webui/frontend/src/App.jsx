@@ -1,20 +1,10 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import ChatMessage from './ChatMessage'
 import AdminPanel from './admin/AdminPanel'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 
-function getCookie(name) {
-  const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'))
-  return match ? decodeURIComponent(match[1]) : null
-}
-
-function setCookie(name, value, days = 365) {
-  const expires = new Date(Date.now() + days * 864e5).toUTCString()
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`
-}
-
-const SESSION_GREETING = (uname) => `Hi, my username is "${uname}".`
+const FETCH_OPTS = { credentials: 'include' }
 
 /** Strip [JSON_DATA_START]...[JSON_DATA_END] blocks from assistant text. */
 function stripJsonDataBlock(text) {
@@ -24,10 +14,6 @@ function stripJsonDataBlock(text) {
 /**
  * Parse an LLM history array into structured conversation turns.
  * Each turn: { userText, assistantText, toolCalls: [{name, input, result}] }
- *
- * LLM history groups:
- *   user(text) → assistant(text + toolUse*) → user(toolResult*) → assistant(text) → ...
- * We collapse all assistant + toolResult exchanges for a given user question into one turn.
  */
 function parseHistoryToTurns(history) {
   if (!Array.isArray(history) || history.length === 0) return []
@@ -94,7 +80,6 @@ function parseHistoryToTurns(history) {
                 return JSON.stringify(c)
               }).join('\n')
             : (typeof tr.content === 'string' ? tr.content : JSON.stringify(tr.content))
-          // Unwrap up to 3 levels of JSON string encoding
           let parsed = resultContent
           for (let j = 0; j < 3; j++) {
             if (typeof parsed !== 'string') break
@@ -130,31 +115,58 @@ export default function App() {
   const [liveMessage, setLiveMessage] = useState('')
   const [patternSaved, setPatternSaved] = useState(false)
   const [patternSaving, setPatternSaving] = useState(false)
-  const [userId] = useState(() => {
-    let id = localStorage.getItem('mcp_user_id')
-    if (!id) { id = crypto.randomUUID(); localStorage.setItem('mcp_user_id', id) }
-    return id
-  })
+  const [authUser, setAuthUser] = useState(null)
+  const [authChecked, setAuthChecked] = useState(false)
+  const [authRequired, setAuthRequired] = useState(false)
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID())
-  const [username, setUsername] = useState(() => getCookie('mcp_username') || 'demo-user')
-  const [usernameDraft, setUsernameDraft] = useState(() => getCookie('mcp_username') || 'demo-user')
   const [feedbackGiven, setFeedbackGiven] = useState(null)
   const [reasoningSteps, setReasoningSteps] = useState([])
   const [pendingQuestion, setPendingQuestion] = useState(null)
   const [activeTab, setActiveTab] = useState('chat')
 
+  const [anonymousUserId] = useState(() => {
+    let id = localStorage.getItem('mcp_user_id')
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('mcp_user_id', id) }
+    return id
+  })
+  const userId = authUser?.sub ?? anonymousUserId
+  const username = authUser?.email || 'demo-user'
+
   const modelId = import.meta.env.VITE_LLM_MODEL_ID || ''
 
   const lastQuestionRef = useRef('')
-  const autoGreetingFiredRef = useRef(false)
   const liveLogRef = useRef(null)
   const chatBodyRef = useRef(null)
+  const allReasoningRef = useRef({})
+  const frozenReasoningRef = useRef([])
+  const allMapDataRef = useRef({})
 
-  // allReasoningRef stores reasoning steps for ALL turns, keyed by turn index.
-  // This persists across history re-parses so previous turns keep their steps.
-  const allReasoningRef = useRef({})  // { [turnIndex]: [{status, message}] }
-  const frozenReasoningRef = useRef([])  // steps for the current in-flight turn
-  const allMapDataRef = useRef({})       // { [turnIndex]: mapData }
+  const refreshAuth = useCallback(async () => {
+    try {
+      const [healthRes, meRes] = await Promise.all([
+        fetch(`${API_URL}/health`, FETCH_OPTS),
+        fetch(`${API_URL}/auth/me`, FETCH_OPTS),
+      ])
+      if (healthRes.ok) {
+        const health = await healthRes.json()
+        setAuthRequired(Boolean(health.auth_required))
+      }
+      if (meRes.ok) {
+        const me = await meRes.json()
+        setAuthUser(me)
+      } else {
+        setAuthUser(null)
+      }
+    } catch {
+      setAuthUser(null)
+    } finally {
+      setAuthChecked(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshAuth()
+  }, [refreshAuth])
 
   useEffect(() => {
     if (chatBodyRef.current) {
@@ -173,16 +185,13 @@ export default function App() {
       const parsed = parseHistoryToTurns(history)
       const lastIdx = parsed.length - 1
       if (parsed.length > 0) {
-        // Save reasoning for current in-flight turn
         if (frozenReasoningRef.current.length > 0) {
           allReasoningRef.current[lastIdx] = [...frozenReasoningRef.current]
         }
-        // Save map data for current turn if present
         if (mapData !== null) {
           allMapDataRef.current[lastIdx] = mapData
         }
       }
-      // Re-attach all stored reasoning and map data to their respective turns.
       parsed.forEach((turn, idx) => {
         if (allReasoningRef.current[idx]) turn.reasoningSteps = allReasoningRef.current[idx]
         if (allMapDataRef.current[idx]) turn.mapData = allMapDataRef.current[idx]
@@ -190,14 +199,6 @@ export default function App() {
       setTurns(parsed)
     }
   }, [history])
-
-  useEffect(() => {
-    if (!autoGreetingFiredRef.current) {
-      autoGreetingFiredRef.current = true
-      submitQuestion(SESSION_GREETING(username))
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   function parseMaybeJson(value) {
     if (typeof value !== 'string') return value
@@ -216,8 +217,6 @@ export default function App() {
 
     if (obj.message !== undefined) {
       const msg = String(obj.message)
-      // Capture ALL live messages as reasoning steps (pinned to this turn when history arrives).
-      // Skip heartbeat noise and the final "Completed" marker.
       const skipPatterns = ['LLM is still thinking', 'Querying Claude']
       if (!skipPatterns.some(p => msg.includes(p))) {
         setReasoningSteps(prev => {
@@ -252,6 +251,7 @@ export default function App() {
     try {
       setPatternSaving(true)
       const res = await fetch(`${API_URL}/pattern/save`, {
+        ...FETCH_OPTS,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, session_id: sessionId, history }),
@@ -267,6 +267,7 @@ export default function App() {
     if (feedbackGiven !== null) return
     try {
       const res = await fetch(`${API_URL}/feedback`, {
+        ...FETCH_OPTS,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, session_id: sessionId, feedback, history }),
@@ -277,6 +278,11 @@ export default function App() {
   }
 
   async function submitQuestion(overrideInput, historyOverride, sessionOverride) {
+    if (authRequired && !authUser) {
+      setError('Please sign in to continue.')
+      return
+    }
+
     const inputToSend = overrideInput !== undefined ? String(overrideInput) : question
     const historyToSend = historyOverride !== undefined ? historyOverride : history
     const sessionToSend = sessionOverride !== undefined ? sessionOverride : sessionId
@@ -292,16 +298,22 @@ export default function App() {
     setReasoningSteps([])
     frozenReasoningRef.current = []
     setMapData(null)
-    if (!inputToSend.startsWith('Hi, my username is')) {
-      setPendingQuestion(inputToSend)
-    }
+    setPendingQuestion(inputToSend)
+
+    const body = { input: inputToSend, history: historyToSend, session_id: sessionToSend }
 
     try {
       const res = await fetch(`${API_URL}/query/stream`, {
+        ...FETCH_OPTS,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ input: inputToSend, history: historyToSend, user_id: userId, username, session_id: sessionToSend }),
+        body: JSON.stringify(body),
       })
+
+      if (res.status === 401) {
+        setAuthUser(null)
+        throw new Error('Please sign in to continue.')
+      }
 
       if (!res.ok && res.status !== 404) {
         let errMsg = `HTTP ${res.status}`
@@ -332,9 +344,10 @@ export default function App() {
         }
       } else {
         const res2 = await fetch(`${API_URL}/query`, {
+          ...FETCH_OPTS,
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ input: inputToSend, history: historyToSend, user_id: userId, username, session_id: sessionToSend }),
+          body: JSON.stringify(body),
         })
         const data = await res2.json()
         if (!res2.ok) throw new Error(data.error || 'API error')
@@ -365,14 +378,17 @@ export default function App() {
     frozenReasoningRef.current = []
     allReasoningRef.current = {}
     allMapDataRef.current = {}
-    submitQuestion(SESSION_GREETING(username), null, newSessionId)
   }
 
   async function resetBackend() {
     setLoading(true)
     setError(null)
     try {
-      const res = await fetch(`${API_URL}/reset`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      const res = await fetch(`${API_URL}/reset`, {
+        ...FETCH_OPTS,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error || 'Failed to reset backend')
     } catch (e) { setError(String(e)) }
@@ -386,14 +402,12 @@ export default function App() {
     }
   }
 
-  // Greeting turn: hide the user bubble but show the AI's welcome response.
-  const isGreeting = (t) => t.userText.startsWith('Hi, my username is')
   const visibleTurns = turns
   const lastTurn = visibleTurns[visibleTurns.length - 1]
+  const showSignInGate = authChecked && authRequired && !authUser && activeTab === 'chat'
 
   return (
     <div className="chat-root">
-      {/* Header */}
       <header className="chat-header">
         <img src="/leaflogo.png" alt="Logo" style={{ height: 44, width: 'auto' }} />
         <h1 style={{ margin: 0, fontSize: 20, fontWeight: 700, color: '#001E2B' }}>MongoDB Atlas MCP AI Demo</h1>
@@ -414,30 +428,38 @@ export default function App() {
           </button>
         </nav>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-          <label htmlFor="username-input" style={{ fontSize: 13, color: '#555' }}>User:</label>
-          <input
-            id="username-input"
-            type="text"
-            value={usernameDraft}
-            onChange={e => setUsernameDraft(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') { setUsername(usernameDraft); setCookie('mcp_username', usernameDraft) }
-            }}
-            style={{ fontSize: 13, padding: '4px 8px', border: '1px solid #ccc', borderRadius: 6, width: 130 }}
-          />
-          <button className="btn-secondary" onClick={() => { setUsername(usernameDraft); setCookie('mcp_username', usernameDraft) }}>
-            Save
-          </button>
+          {authUser ? (
+            <>
+              <span style={{ fontSize: 13, color: '#555' }} title={authUser.email}>
+                {authUser.display_name || authUser.email}
+              </span>
+              <a className="btn-secondary" href={`${API_URL}/auth/logout`} style={{ fontSize: 13, textDecoration: 'none' }}>
+                Sign out
+              </a>
+            </>
+          ) : (
+            <a className="btn-secondary" href={`${API_URL}/auth/login`} style={{ fontSize: 13, textDecoration: 'none' }}>
+              Sign in
+            </a>
+          )}
         </div>
       </header>
 
       {activeTab === 'admin' ? (
-        <AdminPanel username={username} />
+        <AdminPanel username={username} authUser={authUser} />
+      ) : showSignInGate ? (
+        <main className="chat-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ textAlign: 'center', maxWidth: 360 }}>
+            <p style={{ color: '#555', marginBottom: 16 }}>Sign in to use chat and load your memory preferences.</p>
+            <a className="btn-send" href={`${API_URL}/auth/login`} style={{ display: 'inline-block', textDecoration: 'none' }}>
+              Sign in
+            </a>
+          </div>
+        </main>
       ) : (
         <>
-      {/* Chat body */}
       <main className="chat-body" ref={chatBodyRef}>
-        {visibleTurns.filter(t => !isGreeting(t) || t.assistantText).length === 0 && !loading && (
+        {visibleTurns.length === 0 && !loading && (
           <div style={{ textAlign: 'center', color: '#aaa', marginTop: 60, fontSize: 14 }}>
             Ask anything — your conversation will appear here.
           </div>
@@ -448,7 +470,7 @@ export default function App() {
           return (
             <ChatMessage
               key={idx}
-              userText={isGreeting(turn) ? null : turn.userText}
+              userText={turn.userText}
               assistantText={turn.assistantText}
               toolCalls={turn.toolCalls}
               reasoningSteps={turn.reasoningSteps || []}
@@ -459,7 +481,6 @@ export default function App() {
           )
         })}
 
-        {/* In-progress bubble */}
         {loading && pendingQuestion && (
           <>
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
@@ -495,7 +516,6 @@ export default function App() {
         )}
       </main>
 
-      {/* Footer */}
       <footer className="chat-footer">
         {lastTurn?.assistantText && !loading && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
@@ -523,7 +543,7 @@ export default function App() {
               if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!loading) submitQuestion() }
             }}
           />
-          <button className="btn-send" onClick={() => submitQuestion()} disabled={loading}>
+          <button className="btn-send" onClick={() => submitQuestion()} disabled={loading || (authRequired && !authUser)}>
             {loading ? '⏳' : 'Send'}
           </button>
         </div>
