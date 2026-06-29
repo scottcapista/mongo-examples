@@ -1,19 +1,36 @@
 # Finished plans
 
-Plans land here **only after** implementation is validated and tested per the plan checklist.
+Plans land here **only after** you review and sign off on work that was validated, committed, and merged during a batch session.
 
-## When moving a plan from `unfinished/`
+## Lifecycle
 
-1. Confirm every validation / test-plan item passed (UI: headless Playwright when applicable).
-2. Move the file: `unfinished/<name>.md` → `finished/<name>.md`
-3. Update frontmatter: `status: done`, all todos `status: completed`
-4. Add at the top of the body:
+```
+unfinished/  →  pending/  →  finished/
+(implement)     (merged)      (you signed off)
+```
+
+Plans no longer move directly from `unfinished/` to `finished/`. The agent archives to `pending/` after validation; you move to `finished/` after review.
+
+## When moving a plan from `pending/`
+
+1. Review the merged implementation on the long-running batch branch.
+2. Move the file: `pending/<name>.md` → `finished/<name>.md`
+3. Add at the top of the body:
 
    ```markdown
-   **Completed:** YYYY-MM-DD — branch `feature/...` (commit `abc1234` if committed)
+   **Signed off:** YYYY-MM-DD
    ```
 
-5. Remove the row from the unfinished queue in [`../README.md`](../README.md) or mark it done.
-6. **Commit** the feature branch (code + moved plan file). Wait for explicit user approval to commit or push.
+4. Keep the existing **Completed:** note (branch + commit) from when the plan entered `pending/`.
 
-Do not move plans here to "mark progress" — use `status: in_progress` in `unfinished/` instead.
+Do not move plans here to "mark progress" — use `status: in_progress` in `unfinished/` or `status: done` in `pending/` instead.
+
+## Reference: agent archive to `pending/`
+
+When the batch agent succeeds, it moves `unfinished/<name>.md` → `pending/<name>.md` with:
+
+- `status: done`, all todos `status: completed`
+- **Completed:** note with plan branch and commit hash
+- Unfinished queue row removed from [`../README.md`](../README.md)
+
+See [`../pending/README.md`](../pending/README.md) for the full success-path checklist.
