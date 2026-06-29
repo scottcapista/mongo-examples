@@ -1,0 +1,48 @@
+---
+description: Batch plan implementation — two-tier branching, pending archive, headless auto-commit/merge.
+alwaysApply: true
+---
+
+# Plan implementation workflow
+
+When implementing plans from `MongoMCP/docs/plans/unfinished/` (especially headless batch sessions):
+
+## Branching
+
+1. From `main`, create one **long-running** branch: `feature/batch-YYYY-MM-DD` (or `feature/batch-<theme>`).
+2. Per plan, branch from the long-running branch: `feature/batch-YYYY-MM-DD/<plan-slug>`.
+
+## Per plan (sequential — finish N before N+1)
+
+1. Implement plan todos (minimal diff).
+2. Validate every item in the plan's Validation / Test plan section.
+3. UI changes: headless Playwright per `ui-playwright-validation.mdc`.
+
+### Success
+
+- Move `unfinished/<plan>.md` → `pending/<plan>.md`; `status: done`, todos completed, **Completed** note with branch + commit.
+- Update unfinished queue in `MongoMCP/docs/plans/README.md`.
+- **Commit** on plan branch, **merge** into long-running branch (pre-authorized in batch sessions).
+- Delete plan branch after merge is fine.
+
+### Failure (after reasonable retries)
+
+- **Commit** plan branch with message documenting attempts, state, and blockers.
+- **Do not merge.**
+- Leave plan in `unfinished/` with `status: blocked` and a **Blocked** note.
+- Next plan branches from the **long-running branch only**.
+
+## Folders
+
+| Folder | When |
+|--------|------|
+| `unfinished/` | Not started, in progress, blocked |
+| `pending/` | Validated + merged — awaiting user review |
+| `finished/` | User sign-off (`pending/` → `finished/`) |
+
+## Other rules
+
+- Execute in README `order` (ties: alphabetical filename).
+- Do not push unless the user asks.
+- Full docs: `MongoMCP/docs/plans/feature-implementation-workflow.md`
+- Memory cluster: `feature_implementation_workflow` (`scope=0`)
