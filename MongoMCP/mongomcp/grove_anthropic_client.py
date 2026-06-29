@@ -235,7 +235,8 @@ class GroveAnthropicClient(LlmClientBase):
         anthropic_messages = self._convert_tool_messages_to_anthropic(messages)
         anthropic_tools = self._convert_mcp_tools_to_anthropic()
         usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
-        return_obj: Dict[str, Any] = {"history": messages, "usage": usage}
+        usage_calls: List[Dict[str, Any]] = []
+        return_obj: Dict[str, Any] = {"history": messages, "usage": usage, "usage_calls": usage_calls}
 
         if not anthropic_tools:
             return_obj["error"] = "No MCP tools configured. Tool discovery may have failed."
@@ -272,7 +273,18 @@ class GroveAnthropicClient(LlmClientBase):
                 usage["inputTokens"] += in_tok
                 usage["outputTokens"] += out_tok
                 usage["totalTokens"] += in_tok + out_tok
+                call_record = {
+                    "iteration": iteration + 1,
+                    "input_tokens": in_tok,
+                    "output_tokens": out_tok,
+                    "total_tokens": in_tok + out_tok,
+                    "latency_ms": round(elapsed_ms, 1),
+                    "status": "success",
+                }
+                usage_calls.append(call_record)
                 return_obj["usage"] = usage
+                return_obj["usage_calls"] = usage_calls
+                return_obj["usage_last"] = call_record
 
                 assistant_blocks = data.get("content", [])
                 tool_assistant = self._anthropic_assistant_to_tool_message(assistant_blocks)
@@ -364,6 +376,18 @@ class GroveAnthropicClient(LlmClientBase):
 
             except Exception as e:
                 logger.error("Grove tool invocation failed: %s", e)
+                err_call = {
+                    "iteration": iteration + 1,
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "total_tokens": 0,
+                    "latency_ms": 0,
+                    "status": "error",
+                    "error": str(e),
+                }
+                usage_calls.append(err_call)
+                return_obj["usage_calls"] = usage_calls
+                return_obj["usage_last"] = err_call
                 return_obj["error"] = str(e)
                 return return_obj
 

@@ -1,6 +1,7 @@
 import os
 import logging
 import time
+from datetime import datetime, timezone
 from flask import Flask, send_from_directory, request, jsonify, abort, Response, redirect as flask_redirect
 from flask_cors import CORS
 import requests
@@ -26,6 +27,12 @@ from dataset_service import (
 )
 from user_memory_service import list_user_memories
 from access_log import apply_cache_headers, configure_access_logging, log_request
+from session_token_usage_service import (
+    aggregate_token_usage,
+    ensure_session_token_usage_collection,
+    get_llm_history,
+    list_session_token_usage,
+)
 from mongomcp.datasets.discovery import discover_cluster_datasets
 from mongomcp import __version__ as MCP_VERSION
 import mimetypes
@@ -560,8 +567,82 @@ def admin_upload_dataset_stream():
         return jsonify({"error": str(e)}), 400
 
 
+def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except ValueError:
+        return None
+
+
+@app.route('/admin/session-token-usage', methods=['GET'])
+def admin_list_session_token_usage():
+    """List per-LLM-call token usage records (time series)."""
+    try:
+        page = request.args.get("page", 1, type=int)
+        limit = request.args.get("limit", 50, type=int)
+        username = (request.args.get("username") or "").strip() or None
+        user_id = (request.args.get("user_id") or "").strip() or None
+        session_id = (request.args.get("session_id") or "").strip() or None
+        llm_history_id = (request.args.get("llm_history_id") or "").strip() or None
+        from_ts = _parse_optional_datetime(request.args.get("from"))
+        to_ts = _parse_optional_datetime(request.args.get("to"))
+        return jsonify(list_session_token_usage(
+            username=username,
+            user_id=user_id,
+            session_id=session_id,
+            llm_history_id=llm_history_id,
+            from_ts=from_ts,
+            to_ts=to_ts,
+            page=page,
+            limit=limit,
+        )), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/session-token-usage/summary', methods=['GET'])
+def admin_session_token_usage_summary():
+    """Aggregate token usage over time buckets for a user."""
+    try:
+        username = (request.args.get("username") or "").strip() or None
+        user_id = (request.args.get("user_id") or "").strip() or None
+        bucket = (request.args.get("bucket") or "day").strip().lower()
+        from_ts = _parse_optional_datetime(request.args.get("from"))
+        to_ts = _parse_optional_datetime(request.args.get("to"))
+        return jsonify(aggregate_token_usage(
+            username=username,
+            user_id=user_id,
+            bucket=bucket,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/llm-history/<llm_history_id>', methods=['GET'])
+def admin_get_llm_history(llm_history_id):
+    """Fetch full llm_history document linked from a usage record."""
+    try:
+        doc = get_llm_history(llm_history_id)
+        if not doc:
+            return jsonify({"error": "Not found"}), 404
+        return jsonify(doc), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 try:
     ensure_indexes()
+    ensure_session_token_usage_collection()
 except Exception:
     app.logger.warning("Could not ensure admin dataset indexes on startup", exc_info=True)
 

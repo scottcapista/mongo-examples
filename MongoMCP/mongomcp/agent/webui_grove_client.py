@@ -76,6 +76,7 @@ class WebUiGroveClient(GroveAnthropicClient):
     ) -> Dict[str, Any]:
         history = response_obj.get("history", fallback_history or [])
         usage = response_obj.get("usage")
+        usage_calls = response_obj.get("usage_calls")
         stats = response_obj.get("stats")
 
         if response_obj.get("error"):
@@ -84,6 +85,7 @@ class WebUiGroveClient(GroveAnthropicClient):
                 "jsondata": None,
                 "history": history,
                 "usage": usage,
+                "usage_calls": usage_calls,
                 "stats": stats,
             }
 
@@ -106,6 +108,7 @@ class WebUiGroveClient(GroveAnthropicClient):
                 "jsondata": None,
                 "history": history,
                 "usage": usage,
+                "usage_calls": usage_calls,
                 "stats": stats,
             }
 
@@ -115,5 +118,6 @@ class WebUiGroveClient(GroveAnthropicClient):
             "jsondata": tag_json,
             "history": history,
             "usage": usage,
+            "usage_calls": usage_calls,
             "stats": stats,
         }

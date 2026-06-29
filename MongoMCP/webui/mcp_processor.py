@@ -15,6 +15,10 @@ from mongomcp.agent.cache_utils import create_cache_key as _create_cache_key
 from mongomcp.mongo_cache import MongoSessionCache
 from mongomcp.agent.tool_router import ToolRouter
 from mongomcp.llm_factory import create_webui_llm_client
+from session_token_usage_service import (
+    record_session_token_usage,
+    save_llm_history,
+)
 
 import logging
 logger = logging.getLogger(__name__)
@@ -536,6 +540,7 @@ class APIQueryProcessor:
 
         _ctx_block: Optional[str] = None
         _ctx_prefetched = False
+        all_usage_calls: List[dict] = []
 
         async def _invoke():
             nonlocal _ctx_block, _ctx_prefetched
@@ -557,7 +562,12 @@ class APIQueryProcessor:
             self.llm_client.configure_tools(self.mcp_tools_config, self._call_mcp_tool)
             return await self.llm_client.invoke_with_tools_text(messages=msgs)
 
+        def _collect_usage_calls(invoke_result: dict) -> None:
+            for call in invoke_result.get("usage_calls") or []:
+                all_usage_calls.append(call)
+
         result = asyncio.run(_invoke())
+        _collect_usage_calls(result)
         if self._looks_like_no_tools_error(result):
             emit_fn(
                 "MCP tools were unavailable. Reloading backend tool configuration and retrying...",
@@ -566,6 +576,7 @@ class APIQueryProcessor:
             recovered = self._rediscover_tools(emit=emit_fn)
             if recovered:
                 result = asyncio.run(_invoke())
+                _collect_usage_calls(result)
 
         if self._looks_like_no_tools_error(result):
             # Keep this backend recovery detail out of the user-visible response.
@@ -578,6 +589,7 @@ class APIQueryProcessor:
         answer = result.get("response_text", "")
         jsondata = result.get("jsondata")
         corrupt = bool(result.get("clear_history"))
+        turn_error = result.get("error")
 
         # Emit token usage summary after every response
         usage = result.get("usage") or {}
@@ -598,11 +610,24 @@ class APIQueryProcessor:
             msgs = sanitized
             msgs.append({"role": "user", "content": user_content})
             result = asyncio.run(_invoke())
+            _collect_usage_calls(result)
             updated_history = result.get("history", msgs)
             answer = result.get("response_text", "")
             jsondata = result.get("jsondata")
             content = {"text": answer, "jsondata": jsondata}
+            turn_error = result.get("error")
+            usage = result.get("usage") or usage
             if result.get("error"):
+                self._persist_session_usage(
+                    request=request,
+                    user_input=request.input,
+                    response_text=answer,
+                    jsondata=jsondata,
+                    history=updated_history,
+                    usage=usage,
+                    usage_calls=all_usage_calls,
+                    turn_error=turn_error,
+                )
                 return QueryResponse(
                     status="Error",
                     message=result["error"],
@@ -610,11 +635,66 @@ class APIQueryProcessor:
                     history=updated_history,
                 )
 
+        self._persist_session_usage(
+            request=request,
+            user_input=request.input,
+            response_text=answer,
+            jsondata=jsondata,
+            history=updated_history,
+            usage=usage,
+            usage_calls=all_usage_calls,
+            turn_error=turn_error,
+        )
+
         return QueryResponse(
             status="Query Completed", message="Completed",
             content=content,
             history=updated_history,
         )
+
+    def _persist_session_usage(
+        self,
+        *,
+        request: "QueryRequest",
+        user_input: str,
+        response_text: Optional[str],
+        jsondata: Any,
+        history: Optional[List[Any]],
+        usage: dict,
+        usage_calls: List[dict],
+        turn_error: Optional[str],
+    ) -> None:
+        """Best-effort: save llm_history snapshot and time-series usage rows."""
+        model_id = getattr(settings, "LLM_MODEL_ID", "unknown")
+        history_status = "error" if turn_error else "success"
+        try:
+            llm_history_id = save_llm_history(
+                user_id=request.user_id,
+                username=request.username,
+                session_id=request.session_id,
+                source="webui",
+                model_id=model_id,
+                user_input=user_input,
+                response_text=response_text,
+                jsondata=jsondata,
+                history=history,
+                usage=usage,
+                usage_calls=usage_calls,
+                status=history_status,
+                error=turn_error,
+            )
+            record_session_token_usage(
+                llm_history_id=llm_history_id,
+                user_id=request.user_id,
+                username=request.username,
+                session_id=request.session_id,
+                model_id=model_id,
+                source="webui",
+                usage_calls=usage_calls,
+                turn_error=turn_error,
+            )
+        except Exception:
+            logger.warning("Failed to persist session token usage", exc_info=True)
 
     # ------------------------------------------------------------------
     # History trimming / sanitization
