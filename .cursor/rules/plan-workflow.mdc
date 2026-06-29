@@ -10,7 +10,7 @@ When implementing plans from `MongoMCP/docs/plans/unfinished/` (especially headl
 ## Branching
 
 1. From `main`, create one **long-running** branch: `feature/batch-YYYY-MM-DD` (or `feature/batch-<theme>`).
-2. Per plan, branch from the long-running branch: `feature/batch-YYYY-MM-DD/<plan-slug>`.
+2. Per plan, branch from the long-running branch: `feature/batch-YYYY-MM-DD-<plan-slug>` (hyphenated; git cannot nest `feature/batch-…/<slug>` when the parent branch exists).
 
 ## Per plan (sequential — finish N before N+1)
 
@@ -46,3 +46,23 @@ When implementing plans from `MongoMCP/docs/plans/unfinished/` (especially headl
 - Do not push unless the user asks.
 - Full docs: `MongoMCP/docs/plans/feature-implementation-workflow.md`
 - Memory cluster: `feature_implementation_workflow` (`scope=0`)
+
+## Walk-away batch mode
+
+When the user starts a batch from `unfinished/` (or says **long-running session**, **walk-away batch**, **implement all unfinished plans**):
+
+- Execute plans **sequentially** until `unfinished/` is empty or every remaining plan is `blocked`.
+- After merging plan N into the long-running branch, **immediately** start plan N+1 in the **same session**.
+- **Do not** ask the user to hit continue, say continue, or wait for approval between plans.
+- **Do not** end a turn with engagement prompts like “say continue and I’ll run the next plan.”
+- Auto-commit and auto-merge remain **pre-authorized** when validation passes.
+
+**Stop only for:**
+
+- Human-only blockers (restart services, `.env` secrets, OIDC IdP login, push approval)
+- A plan marked `blocked` after reasonable retries (skip to the next plan; branch from long-running only)
+- Explicit user interrupt
+
+**Resume after context limit:** user opens a new chat with “Resume batch on `feature/batch-…`” — read `unfinished/` + `pending/`, continue next plan without asking to continue.
+
+**Per-plan branch naming:** use hyphens, not nested slashes (e.g. `feature/batch-2026-06-28-llm-cost-estimation`) because git cannot nest under an existing branch name.

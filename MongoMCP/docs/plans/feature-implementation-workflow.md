@@ -29,7 +29,7 @@ Org-wide strategy for planning and shipping features in this repo.
 
 | Step | Action |
 |------|--------|
-| 1. Branch | `feature/batch-<date>/<plan-slug>` from the long-running branch |
+| 1. Branch | `feature/batch-<date>-<plan-slug>` from the long-running branch |
 | 2. Implement | Complete todos; minimal diff; UI → headless Playwright (`.cursor/rules/ui-playwright-validation.mdc`) |
 | 3. Validate | Run every item in the plan's Validation / Test plan section |
 | 4a. Success | Move to `pending/`, update frontmatter + README queue, commit on plan branch, merge into long-running branch |
@@ -51,7 +51,7 @@ Org-wide strategy for planning and shipping features in this repo.
 ## Git conventions
 
 - Long-running: `feature/batch-YYYY-MM-DD` or `feature/batch-<theme>`
-- Per-plan: `feature/batch-YYYY-MM-DD/<plan-slug>` (slug from filename)
+- Per-plan: `feature/batch-YYYY-MM-DD-<plan-slug>` (hyphenated slug; not nested slashes)
 - Headless batch sessions: **auto-commit and auto-merge pre-authorized** when validation passes (overrides default commit-only-when-asked for this workflow).
 - Do not push unless the user asks.
 - Leave failed plan branches on disk for inspection.
@@ -59,3 +59,18 @@ Org-wide strategy for planning and shipping features in this repo.
 ## Sequential execution
 
 Finish validate → archive → commit → merge for plan N before starting plan N+1. Never branch the next plan from a failed, unmerged plan branch.
+
+## Walk-away batch mode (no continue prompts)
+
+When the user starts a batch from `unfinished/` (or says **long-running session**, **walk-away batch**, **implement all unfinished plans**):
+
+- Run plans sequentially until `unfinished/` is empty or all remaining plans are `blocked`.
+- After merging plan N, **immediately** start plan N+1 in the **same agent session**.
+- **Do not** ask the user to continue between plans or end with “say continue” prompts.
+- Auto-commit and auto-merge remain pre-authorized when validation passes.
+
+**Stop only for:** human-only blockers (service restart, secrets, OIDC, push), a plan left `blocked` after retries (then skip to next), or explicit user interrupt.
+
+**Resume:** new chat — “Resume batch on `feature/batch-…`”; read queue and continue without asking to continue.
+
+**Per-plan branches:** `feature/batch-YYYY-MM-DD-<plan-slug>` (hyphens, not nested slashes).
