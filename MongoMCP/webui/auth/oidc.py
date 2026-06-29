@@ -211,6 +211,39 @@ def clear_user_session() -> None:
     session.pop(SESSION_USER_KEY, None)
 
 
+def dev_auth_enabled() -> bool:
+    return bool(
+        getattr(settings, "DEV_AUTH_LOGIN", False)
+        and getattr(settings, "DEV_AUTH_SECRET", "")
+    )
+
+
+def set_dev_user_session(
+    *,
+    sub: str,
+    email: str,
+    display_name: Optional[str] = None,
+) -> UserSession:
+    """Set a Flask session matching the OIDC callback shape (local dev only)."""
+    name = display_name or email.split("@")[0]
+    user = UserSession(
+        sub=sub,
+        email=email,
+        display_name=name,
+        access_token="",
+        id_token_claims={},
+    )
+    session[SESSION_USER_KEY] = {
+        "sub": user.sub,
+        "email": user.email,
+        "display_name": user.display_name,
+        "access_token": user.access_token,
+        "id_token_claims": user.id_token_claims,
+    }
+    session.modified = True
+    return user
+
+
 def user_session_to_dict(user: UserSession) -> Dict[str, str]:
     return {
         "sub": user.sub,

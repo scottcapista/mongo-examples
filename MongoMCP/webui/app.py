@@ -10,10 +10,12 @@ from local_settings import settings
 from auth.oidc import (
     auth_required,
     clear_user_session,
+    dev_auth_enabled,
     get_user_from_session,
     handle_callback,
     is_oidc_configured,
     resolve_query_identity,
+    set_dev_user_session,
     start_login,
     user_session_to_dict,
 )
@@ -28,9 +30,11 @@ from dataset_service import (
 from user_memory_service import list_user_memories
 from access_log import apply_cache_headers, configure_access_logging, log_request
 from session_token_usage_service import (
+    aggregate_session_timeline,
     aggregate_token_usage,
-    ensure_session_token_usage_collection,
+    ensure_session_metrics_collections,
     get_llm_history,
+    list_recent_sessions,
     list_session_token_usage,
 )
 from mongomcp.datasets.discovery import discover_cluster_datasets
@@ -168,6 +172,20 @@ def auth_callback():
 @app.route('/auth/logout', methods=['GET', 'POST'])
 def auth_logout():
     clear_user_session()
+    return flask_redirect("/")
+
+
+@app.route('/auth/dev-login', methods=['GET'])
+def auth_dev_login():
+    if not dev_auth_enabled():
+        return jsonify({"error": "Not found"}), 404
+    if request.args.get("secret") != settings.DEV_AUTH_SECRET:
+        return jsonify({"error": "Forbidden"}), 403
+    email = request.args.get("email") or settings.DEV_AUTH_DEFAULT_EMAIL
+    sub = request.args.get("sub", "dev-auth-test-sub")
+    display_name = request.args.get("display_name") or email.split("@")[0]
+    set_dev_user_session(sub=sub, email=email, display_name=display_name)
+    app.logger.info("Dev auth login for %s", email)
     return flask_redirect("/")
 
 
@@ -583,9 +601,13 @@ def _parse_optional_datetime(value: Optional[str]) -> Optional[datetime]:
 def admin_list_session_token_usage():
     """List per-LLM-call token usage records (time series)."""
     try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view token usage"}), 401
+
         page = request.args.get("page", 1, type=int)
         limit = request.args.get("limit", 50, type=int)
-        username = (request.args.get("username") or "").strip() or None
+        username = user.email
         user_id = (request.args.get("user_id") or "").strip() or None
         session_id = (request.args.get("session_id") or "").strip() or None
         llm_history_id = (request.args.get("llm_history_id") or "").strip() or None
@@ -606,18 +628,61 @@ def admin_list_session_token_usage():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route('/admin/session-token-usage/sessions', methods=['GET'])
+def admin_list_recent_sessions():
+    """Recent browser sessions with token totals for the signed-in user."""
+    try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view sessions"}), 401
+        limit = request.args.get("limit", 20, type=int)
+        return jsonify(list_recent_sessions(username=user.email, limit=limit)), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/session-timeline', methods=['GET'])
+def admin_session_timeline():
+    """Timeline of tokens + strategy/cache events for charting."""
+    try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view session timeline"}), 401
+        session_id = (request.args.get("session_id") or "").strip() or None
+        bucket = (request.args.get("bucket") or "hour").strip().lower()
+        from_ts = _parse_optional_datetime(request.args.get("from"))
+        to_ts = _parse_optional_datetime(request.args.get("to"))
+        return jsonify(aggregate_session_timeline(
+            username=user.email,
+            session_id=session_id,
+            bucket=bucket,
+            from_ts=from_ts,
+            to_ts=to_ts,
+        )), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route('/admin/session-token-usage/summary', methods=['GET'])
 def admin_session_token_usage_summary():
     """Aggregate token usage over time buckets for a user."""
     try:
-        username = (request.args.get("username") or "").strip() or None
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view token usage"}), 401
+
+        username = user.email
         user_id = (request.args.get("user_id") or "").strip() or None
+        session_id = (request.args.get("session_id") or "").strip() or None
         bucket = (request.args.get("bucket") or "day").strip().lower()
         from_ts = _parse_optional_datetime(request.args.get("from"))
         to_ts = _parse_optional_datetime(request.args.get("to"))
         return jsonify(aggregate_token_usage(
             username=username,
             user_id=user_id,
+            session_id=session_id,
             bucket=bucket,
             from_ts=from_ts,
             to_ts=to_ts,
@@ -631,9 +696,15 @@ def admin_session_token_usage_summary():
 def admin_get_llm_history(llm_history_id):
     """Fetch full llm_history document linked from a usage record."""
     try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view LLM history"}), 401
+
         doc = get_llm_history(llm_history_id)
         if not doc:
             return jsonify({"error": "Not found"}), 404
+        if doc.get("username") and doc.get("username") != user.email:
+            return jsonify({"error": "Forbidden"}), 403
         return jsonify(doc), 200
     except Exception as e:
         traceback.print_exc()
@@ -642,7 +713,7 @@ def admin_get_llm_history(llm_history_id):
 
 try:
     ensure_indexes()
-    ensure_session_token_usage_collection()
+    ensure_session_metrics_collections()
 except Exception:
     app.logger.warning("Could not ensure admin dataset indexes on startup", exc_info=True)
 

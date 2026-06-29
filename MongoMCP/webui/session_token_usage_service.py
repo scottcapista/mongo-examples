@@ -14,7 +14,12 @@ from mongomcp.mongodb_client import MongoDBClient
 logger = logging.getLogger(__name__)
 
 SESSION_TOKEN_USAGE_COL = "session_token_usage"
+SESSION_EVENTS_COL = "session_events"
 LLM_HISTORY_COL = "llm_history"
+
+EVENT_STRATEGY_RECALL = "strategy_recall"
+EVENT_STRATEGY_STORE = "strategy_store"
+EVENT_TOOL_CACHE_HIT = "tool_cache_hit"
 
 
 def _utcnow() -> datetime:
@@ -25,6 +30,65 @@ def _get_db() -> MongoDBClient:
     client = MongoDBClient(settings)
     client.sync_connect_to_mongodb()
     return client
+
+
+def ensure_session_events_collection() -> None:
+    """Create the session events time-series collection if it does not exist."""
+    try:
+        client = _get_db()
+        db = client.db
+        if SESSION_EVENTS_COL in db.list_collection_names():
+            return
+        db.create_collection(
+            SESSION_EVENTS_COL,
+            timeseries={
+                "timeField": "timestamp",
+                "metaField": "meta",
+                "granularity": "seconds",
+            },
+        )
+        logger.info("Created time-series collection %s", SESSION_EVENTS_COL)
+    except Exception:
+        logger.warning("Could not ensure session_events collection", exc_info=True)
+
+
+def ensure_session_metrics_collections() -> None:
+    ensure_session_token_usage_collection()
+    ensure_session_events_collection()
+
+
+def record_session_event(
+    *,
+    event_type: str,
+    user_id: Optional[str],
+    username: Optional[str],
+    session_id: Optional[str],
+    source: str = "webui",
+    tool_name: Optional[str] = None,
+    detail: Optional[Dict[str, Any]] = None,
+) -> None:
+    """Record a single session-scoped event (strategy recall/store, tool cache hit, etc.)."""
+    ensure_session_events_collection()
+    meta = {
+        "username": username or "anonymous",
+        "user_id": user_id or "",
+        "session_id": session_id or "",
+        "event_type": event_type,
+        "source": source,
+    }
+    doc: Dict[str, Any] = {
+        "timestamp": _utcnow(),
+        "meta": meta,
+    }
+    if tool_name:
+        doc["tool_name"] = tool_name
+    if detail:
+        doc["detail"] = detail
+    try:
+        client = _get_db()
+        client.get_collection(SESSION_EVENTS_COL).insert_one(doc)
+    except Exception:
+        logger.warning("Failed to record session event %s", event_type, exc_info=True)
 
 
 def ensure_session_token_usage_collection() -> None:
@@ -140,6 +204,8 @@ def record_session_token_usage(
             "input_tokens": int(call.get("input_tokens", 0) or 0),
             "output_tokens": int(call.get("output_tokens", 0) or 0),
             "total_tokens": int(call.get("total_tokens", 0) or 0),
+            "cache_read_input_tokens": int(call.get("cache_read_input_tokens", 0) or 0),
+            "cache_creation_input_tokens": int(call.get("cache_creation_input_tokens", 0) or 0),
             "latency_ms": float(call.get("latency_ms", 0) or 0),
             "status": call.get("status") or "success",
             "error": call.get("error"),
@@ -230,6 +296,7 @@ def aggregate_token_usage(
     *,
     username: Optional[str] = None,
     user_id: Optional[str] = None,
+    session_id: Optional[str] = None,
     bucket: str = "day",
     from_ts: Optional[datetime] = None,
     to_ts: Optional[datetime] = None,
@@ -243,6 +310,8 @@ def aggregate_token_usage(
         match["meta.username"] = username
     if user_id:
         match["meta.user_id"] = user_id
+    if session_id:
+        match["meta.session_id"] = session_id
     if from_ts or to_ts:
         ts_filt: Dict[str, Any] = {}
         if from_ts:
@@ -265,6 +334,8 @@ def aggregate_token_usage(
                 "input_tokens": {"$sum": "$input_tokens"},
                 "output_tokens": {"$sum": "$output_tokens"},
                 "total_tokens": {"$sum": "$total_tokens"},
+                "cache_read_input_tokens": {"$sum": "$cache_read_input_tokens"},
+                "cache_creation_input_tokens": {"$sum": "$cache_creation_input_tokens"},
                 "call_count": {"$sum": 1},
                 "error_count": {
                     "$sum": {"$cond": [{"$eq": ["$status", "error"]}, 1, 0]},
@@ -288,12 +359,152 @@ def aggregate_token_usage(
             "input_tokens": row.get("input_tokens", 0),
             "output_tokens": row.get("output_tokens", 0),
             "total_tokens": row.get("total_tokens", 0),
+            "cache_read_input_tokens": row.get("cache_read_input_tokens", 0),
+            "cache_creation_input_tokens": row.get("cache_creation_input_tokens", 0),
             "call_count": row.get("call_count", 0),
             "error_count": row.get("error_count", 0),
             "avg_latency_ms": round(row.get("avg_latency_ms") or 0, 1),
         })
 
-    return {"buckets": buckets, "bucket_unit": unit, "filters": {"username": username, "user_id": user_id}}
+    return {"buckets": buckets, "bucket_unit": unit, "filters": {"username": username, "user_id": user_id, "session_id": session_id}}
+
+
+def list_recent_sessions(
+    *,
+    username: str,
+    limit: int = 20,
+) -> Dict[str, Any]:
+    """Distinct session_ids with latest activity for a user."""
+    ensure_session_metrics_collections()
+    client = _get_db()
+    usage_coll = client.get_collection(SESSION_TOKEN_USAGE_COL)
+    pipeline = [
+        {"$match": {"meta.username": username, "meta.session_id": {"$ne": ""}}},
+        {"$group": {
+            "_id": "$meta.session_id",
+            "last_seen": {"$max": "$timestamp"},
+            "llm_calls": {"$sum": 1},
+            "total_tokens": {"$sum": "$total_tokens"},
+        }},
+        {"$sort": {"last_seen": -1}},
+        {"$limit": max(1, min(limit, 50))},
+    ]
+    sessions = []
+    for row in usage_coll.aggregate(pipeline):
+        last = row.get("last_seen")
+        sessions.append({
+            "session_id": row.get("_id"),
+            "last_seen": last.isoformat() if hasattr(last, "isoformat") else last,
+            "llm_calls": row.get("llm_calls", 0),
+            "total_tokens": row.get("total_tokens", 0),
+        })
+    return {"sessions": sessions}
+
+
+def aggregate_session_timeline(
+    *,
+    username: str,
+    session_id: Optional[str] = None,
+    bucket: str = "hour",
+    from_ts: Optional[datetime] = None,
+    to_ts: Optional[datetime] = None,
+) -> Dict[str, Any]:
+    """Merge token usage and session events into one timeline for charting."""
+    ensure_session_metrics_collections()
+    unit = bucket if bucket in ("hour", "day", "month") else "hour"
+
+    usage_match: Dict[str, Any] = {"meta.username": username}
+    if session_id:
+        usage_match["meta.session_id"] = session_id
+    ts_filt: Optional[Dict[str, Any]] = None
+    if from_ts or to_ts:
+        ts_filt = {}
+        if from_ts:
+            ts_filt["$gte"] = from_ts
+        if to_ts:
+            ts_filt["$lte"] = to_ts
+        usage_match["timestamp"] = ts_filt
+
+    event_match: Dict[str, Any] = {"meta.username": username}
+    if session_id:
+        event_match["meta.session_id"] = session_id
+    if ts_filt:
+        event_match["timestamp"] = ts_filt
+
+    client = _get_db()
+    usage_coll = client.get_collection(SESSION_TOKEN_USAGE_COL)
+    events_coll = client.get_collection(SESSION_EVENTS_COL)
+
+    usage_pipeline: List[Dict[str, Any]] = [
+        {"$match": usage_match},
+        {"$group": {
+            "_id": {"$dateTrunc": {"date": "$timestamp", "unit": unit}},
+            "total_tokens": {"$sum": "$total_tokens"},
+            "input_tokens": {"$sum": "$input_tokens"},
+            "output_tokens": {"$sum": "$output_tokens"},
+            "cache_read_input_tokens": {"$sum": "$cache_read_input_tokens"},
+            "cache_creation_input_tokens": {"$sum": "$cache_creation_input_tokens"},
+            "llm_calls": {"$sum": 1},
+        }},
+    ]
+    events_pipeline: List[Dict[str, Any]] = [
+        {"$match": event_match},
+        {"$group": {
+            "_id": {
+                "bucket": {"$dateTrunc": {"date": "$timestamp", "unit": unit}},
+                "event_type": "$meta.event_type",
+            },
+            "count": {"$sum": 1},
+        }},
+    ]
+
+    by_bucket: Dict[str, Dict[str, Any]] = {}
+
+    def _bucket_key(ts: Any) -> str:
+        if hasattr(ts, "isoformat"):
+            return ts.isoformat()
+        return str(ts)
+
+    for row in usage_coll.aggregate(usage_pipeline):
+        key = _bucket_key(row.get("_id"))
+        by_bucket.setdefault(key, {"bucket": key})
+        by_bucket[key].update({
+            "total_tokens": row.get("total_tokens", 0),
+            "input_tokens": row.get("input_tokens", 0),
+            "output_tokens": row.get("output_tokens", 0),
+            "cache_read_input_tokens": row.get("cache_read_input_tokens", 0),
+            "cache_creation_input_tokens": row.get("cache_creation_input_tokens", 0),
+            "llm_calls": row.get("llm_calls", 0),
+        })
+
+    for row in events_coll.aggregate(events_pipeline):
+        bucket_id = row.get("_id") or {}
+        key = _bucket_key(bucket_id.get("bucket"))
+        event_type = bucket_id.get("event_type") or "unknown"
+        by_bucket.setdefault(key, {"bucket": key})
+        by_bucket[key][event_type] = by_bucket[key].get(event_type, 0) + row.get("count", 0)
+
+    points = []
+    for key in sorted(by_bucket.keys()):
+        pt = by_bucket[key]
+        points.append({
+            "bucket": pt.get("bucket", key),
+            "total_tokens": pt.get("total_tokens", 0),
+            "input_tokens": pt.get("input_tokens", 0),
+            "output_tokens": pt.get("output_tokens", 0),
+            "cache_read_input_tokens": pt.get("cache_read_input_tokens", 0),
+            "cache_creation_input_tokens": pt.get("cache_creation_input_tokens", 0),
+            "llm_calls": pt.get("llm_calls", 0),
+            "strategy_recall": pt.get(EVENT_STRATEGY_RECALL, 0),
+            "strategy_store": pt.get(EVENT_STRATEGY_STORE, 0),
+            "tool_cache_hit": pt.get(EVENT_TOOL_CACHE_HIT, 0),
+        })
+
+    return {
+        "points": points,
+        "bucket_unit": unit,
+        "filters": {"username": username, "session_id": session_id},
+    }
 
 
 def get_llm_history(llm_history_id: str) -> Optional[Dict[str, Any]]:

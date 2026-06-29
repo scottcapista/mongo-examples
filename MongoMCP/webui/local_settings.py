@@ -76,6 +76,15 @@ class LocalSettings:
             '1', 'true', 'yes', 'on'
         )
 
+        # Local-only dev login for Playwright / agent testing (never set in AWS)
+        self.DEV_AUTH_LOGIN = os.getenv('DEV_AUTH_LOGIN', 'false').lower() in (
+            '1', 'true', 'yes', 'on'
+        )
+        self.DEV_AUTH_SECRET = os.getenv('DEV_AUTH_SECRET', '')
+        self.DEV_AUTH_DEFAULT_EMAIL = os.getenv(
+            'DEV_AUTH_DEFAULT_EMAIL', 'dev-user@localhost'
+        )
+
         # Voyage AI API key (only needed if EMBEDDING_MODEL_ID starts with "voyage-" and you run locally
         # without Atlas Data API embedding; typically stored in your MongoDB secret in production)
         self.VOYAGE_AI_KEY = os.getenv('VOYAGE_AI_KEY', 'your-voyage-api-key-here')

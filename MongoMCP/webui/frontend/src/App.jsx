@@ -237,6 +237,10 @@ export default function App() {
       if (jd && typeof jd === 'object') setMapData(jd)
     }
 
+    if (obj.error) {
+      setError(String(obj.error))
+    }
+
     if (obj.clear_history) {
       setQuestion(lastQuestionRef.current)
       setMapData(null)

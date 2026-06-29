@@ -3,6 +3,7 @@ import DatasetList from './DatasetList'
 import DatasetUpload from './DatasetUpload'
 import DatasetDetail from './DatasetDetail'
 import UserMemory from './UserMemory'
+import SessionTokenUsage from './SessionTokenUsage'
 
 export default function AdminPanel({ username, authUser }) {
   const [section, setSection] = useState('datasets')
@@ -42,11 +43,21 @@ export default function AdminPanel({ username, authUser }) {
           >
             User Memory
           </button>
+          <button
+            type="button"
+            className={`admin-sidebar__item ${section === 'token-usage' ? 'admin-sidebar__item--active' : ''}`}
+            onClick={() => { setSection('token-usage'); setView('list'); setSelectedId(null) }}
+          >
+            Token Usage
+          </button>
         </nav>
       </aside>
       <main className="admin-content">
         {section === 'user-memory' && (
           <UserMemory username={username} authUser={authUser} />
+        )}
+        {section === 'token-usage' && (
+          <SessionTokenUsage username={username} authUser={authUser} />
         )}
         {section === 'datasets' && view === 'upload' && (
           <DatasetUpload

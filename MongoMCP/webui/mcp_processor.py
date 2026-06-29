@@ -16,6 +16,10 @@ from mongomcp.mongo_cache import MongoSessionCache
 from mongomcp.agent.tool_router import ToolRouter
 from mongomcp.llm_factory import create_webui_llm_client
 from session_token_usage_service import (
+    EVENT_STRATEGY_RECALL,
+    EVENT_STRATEGY_STORE,
+    EVENT_TOOL_CACHE_HIT,
+    record_session_event,
     record_session_token_usage,
     save_llm_history,
 )
@@ -91,6 +95,9 @@ class APIQueryProcessor:
             self._session_instructions: Optional[str] = None
             self._tools_fetched_at: Optional[float] = None
             self._base_system_prompt: List[dict] = []
+            self._current_session_id: Optional[str] = None
+            self._current_username: Optional[str] = None
+            self._current_user_id: Optional[str] = None
             _cache_ns = getattr(settings, "CACHE_NAMESPACE", "global")
             self._tool_response_cache = MongoSessionCache(
                 settings, username="webui", session_id=_cache_ns,
@@ -348,9 +355,25 @@ class APIQueryProcessor:
             emit_fn(f"Error fetching collection info for {name}: {e}", status="Error")
         return name, config, tools, collection_info, agent_prompt
 
-    # ------------------------------------------------------------------
-    # MCP tool dispatch
-    # ------------------------------------------------------------------
+    @staticmethod
+    def _strategy_event_type(toolname: str) -> Optional[str]:
+        if "strategy_recall" in toolname:
+            return EVENT_STRATEGY_RECALL
+        if "strategy_store" in toolname:
+            return EVENT_STRATEGY_STORE
+        return None
+
+    def _record_tool_event(self, toolname: str, event_type: str) -> None:
+        try:
+            record_session_event(
+                event_type=event_type,
+                user_id=self._current_user_id,
+                username=self._current_username,
+                session_id=self._current_session_id,
+                tool_name=toolname,
+            )
+        except Exception:
+            logger.warning("Failed to record tool event %s", event_type, exc_info=True)
 
     async def _call_mcp_tool(self, toolname, tool_input):
         endpoint_name, endpoint_tool_name = self._resolve_endpoint(toolname)
@@ -385,6 +408,7 @@ class APIQueryProcessor:
             cached = await self._tool_response_cache.get(cache_key)
             if cached is not None:
                 self._emit(f"Cached: {toolname}", status="Tool Cache")
+                self._record_tool_event(toolname, EVENT_TOOL_CACHE_HIT)
                 return _annotate_cached(cached)
 
         # Agent tools run a full sub-agent loop; give them much more time.
@@ -418,12 +442,26 @@ class APIQueryProcessor:
         # Agent tools are not retried — a second run_prompt call would spawn a
         # duplicate sub-agent.  All other tools retry up to 4 times.
         max_attempts = 1 if is_agent_tool else 4
+
+        def _is_connection_failure(exc: BaseException) -> bool:
+            msg = str(exc).lower()
+            return (
+                "connection refused" in msg
+                or "failed to establish a new connection" in msg
+                or "connect call failed" in msg
+            )
+
         for attempt in range(max_attempts):
             try:
                 result = await asyncio.wait_for(_run(), timeout=outer_timeout)
                 break
             except Exception as exc:
                 last_exc = exc
+                if _is_connection_failure(exc):
+                    raise RuntimeError(
+                        f"MCP server unreachable for {toolname!r}. "
+                        "Start the MCP server on port 8000 (e.g. ./scripts/local-run.sh)."
+                    ) from exc
                 if attempt < max_attempts - 1:
                     wait = 1.0 * (attempt + 1)
                     logger.warning("MCP call to %r failed (attempt %d/%d): %s — retrying in %.1fs", toolname, attempt + 1, max_attempts, exc, wait)
@@ -435,6 +473,10 @@ class APIQueryProcessor:
         if cache_key is not None:
             self._tool_response_cache.reset_connection()
             await self._tool_response_cache.set(cache_key, result, ttl=cache_ttl)
+
+        strategy_event = self._strategy_event_type(toolname)
+        if strategy_event:
+            self._record_tool_event(toolname, strategy_event)
 
         return result
 
@@ -469,13 +511,19 @@ class APIQueryProcessor:
         prefs_text = ""
         try:
             sessions_res, prefs_res = await asyncio.gather(
-                self._call_mcp_tool("memory_list_sessions", {"filter": {"username": username}, "limit": 5}),
-                self._call_mcp_tool("memory_recall", {
-                    "query": "preferences working style tools interests",
-                    "username": username,
-                    "memory_types": ["user_preference"],
-                    "limit": 5,
-                }),
+                asyncio.wait_for(
+                    self._call_mcp_tool("memory_list_sessions", {"filter": {"username": username}, "limit": 5}),
+                    timeout=20,
+                ),
+                asyncio.wait_for(
+                    self._call_mcp_tool("memory_recall", {
+                        "query": "preferences working style tools interests",
+                        "username": username,
+                        "memory_types": ["user_preference"],
+                        "limit": 5,
+                    }),
+                    timeout=20,
+                ),
                 return_exceptions=True,
             )
             if not isinstance(sessions_res, Exception):
@@ -521,6 +569,8 @@ class APIQueryProcessor:
         emit_fn = emit or self._emit
         # Store session_id so sub-agents can inherit it without the LLM needing to pass it.
         self._current_session_id = request.session_id
+        self._current_username = request.username
+        self._current_user_id = request.user_id
         # History is owned entirely by the frontend — use only what was sent in the request.
         history = self._trim_history(list(request.history or []))
 
@@ -595,10 +645,15 @@ class APIQueryProcessor:
         usage = result.get("usage") or {}
         in_tok = int(usage.get("inputTokens", 0) or 0)
         out_tok = int(usage.get("outputTokens", 0) or 0)
+        cache_read = int(usage.get("cacheReadInputTokens", 0) or 0)
+        cache_write = int(usage.get("cacheCreationInputTokens", 0) or 0)
         total = in_tok + out_tok
         pct = round(total / self.MAX_CONTEXT_TOKENS * 100, 1)
+        cache_part = ""
+        if cache_read or cache_write:
+            cache_part = f"  cache read: {cache_read:,}  cache write: {cache_write:,}"
         emit_fn(
-            f"Tokens — in: {in_tok:,}  out: {out_tok:,}  total: {total:,}  ({pct}% of {self.MAX_CONTEXT_TOKENS // 1000}k)",
+            f"Tokens — in: {in_tok:,}  out: {out_tok:,}  total: {total:,}{cache_part}  ({pct}% of {self.MAX_CONTEXT_TOKENS // 1000}k)",
             status="Token Usage",
         )
 

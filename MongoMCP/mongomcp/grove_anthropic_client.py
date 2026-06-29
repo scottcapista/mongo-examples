@@ -234,7 +234,7 @@ class GroveAnthropicClient(LlmClientBase):
 
         anthropic_messages = self._convert_tool_messages_to_anthropic(messages)
         anthropic_tools = self._convert_mcp_tools_to_anthropic()
-        usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0}
+        usage = {"inputTokens": 0, "outputTokens": 0, "totalTokens": 0, "cacheReadInputTokens": 0, "cacheCreationInputTokens": 0}
         usage_calls: List[Dict[str, Any]] = []
         return_obj: Dict[str, Any] = {"history": messages, "usage": usage, "usage_calls": usage_calls}
 
@@ -270,14 +270,20 @@ class GroveAnthropicClient(LlmClientBase):
 
                 in_tok = int(data.get("usage", {}).get("input_tokens", 0))
                 out_tok = int(data.get("usage", {}).get("output_tokens", 0))
+                cache_read = int(data.get("usage", {}).get("cache_read_input_tokens", 0) or 0)
+                cache_creation = int(data.get("usage", {}).get("cache_creation_input_tokens", 0) or 0)
                 usage["inputTokens"] += in_tok
                 usage["outputTokens"] += out_tok
                 usage["totalTokens"] += in_tok + out_tok
+                usage["cacheReadInputTokens"] = int(usage.get("cacheReadInputTokens", 0) or 0) + cache_read
+                usage["cacheCreationInputTokens"] = int(usage.get("cacheCreationInputTokens", 0) or 0) + cache_creation
                 call_record = {
                     "iteration": iteration + 1,
                     "input_tokens": in_tok,
                     "output_tokens": out_tok,
                     "total_tokens": in_tok + out_tok,
+                    "cache_read_input_tokens": cache_read,
+                    "cache_creation_input_tokens": cache_creation,
                     "latency_ms": round(elapsed_ms, 1),
                     "status": "success",
                 }
