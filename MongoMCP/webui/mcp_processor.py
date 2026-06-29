@@ -11,6 +11,7 @@ import requests
 from pydantic import BaseModel
 
 from local_settings import settings
+from mongomcp.model_pricing import estimate_cost_usd
 from mongomcp.agent.cache_utils import create_cache_key as _create_cache_key
 from mongomcp.mongo_cache import MongoSessionCache
 from mongomcp.agent.tool_router import ToolRouter
@@ -774,8 +775,16 @@ class APIQueryProcessor:
         cache_part = ""
         if cache_read or cache_write:
             cache_part = f"  cache read: {cache_read:,}  cache write: {cache_write:,}"
+        cost = estimate_cost_usd(
+            model_id=getattr(settings, "LLM_MODEL_ID", "unknown"),
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            cache_read_input_tokens=cache_read,
+            cache_creation_input_tokens=cache_write,
+        )
+        cost_part = f"  est. ${cost:.4f}" if cost is not None else ""
         emit_fn(
-            f"Tokens — in: {in_tok:,}  out: {out_tok:,}  total: {total:,}{cache_part}  ({pct}% of {self.MAX_CONTEXT_TOKENS // 1000}k)",
+            f"Tokens — in: {in_tok:,}  out: {out_tok:,}  total: {total:,}{cache_part}{cost_part}  ({pct}% of {self.MAX_CONTEXT_TOKENS // 1000}k)",
             status="Token Usage",
         )
 

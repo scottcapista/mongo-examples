@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from bson import ObjectId
 
 from local_settings import settings
+from mongomcp.model_pricing import estimate_cost_usd
 from mongomcp.mongodb_client import MongoDBClient
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,44 @@ EVENT_TOOL_CACHE_HIT = "tool_cache_hit"
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _row_estimated_cost_usd(
+    *,
+    model_id: Optional[str],
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_read_input_tokens: int = 0,
+    cache_creation_input_tokens: int = 0,
+) -> Optional[float]:
+    cost = estimate_cost_usd(
+        model_id=model_id or "",
+        input_tokens=int(input_tokens or 0),
+        output_tokens=int(output_tokens or 0),
+        cache_read_input_tokens=int(cache_read_input_tokens or 0),
+        cache_creation_input_tokens=int(cache_creation_input_tokens or 0),
+    )
+    if cost is None:
+        return None
+    return round(cost, 6)
+
+
+def _attach_record_cost(row: Dict[str, Any]) -> None:
+    meta = row.get("meta") or {}
+    row["estimated_cost_usd"] = _row_estimated_cost_usd(
+        model_id=meta.get("model_id"),
+        input_tokens=row.get("input_tokens", 0),
+        output_tokens=row.get("output_tokens", 0),
+        cache_read_input_tokens=row.get("cache_read_input_tokens", 0),
+        cache_creation_input_tokens=row.get("cache_creation_input_tokens", 0),
+    )
+
+
+def _sum_costs(costs: List[Optional[float]]) -> Optional[float]:
+    values = [c for c in costs if c is not None]
+    if not values:
+        return None
+    return round(sum(values), 6)
 
 
 def _get_db() -> MongoDBClient:
@@ -274,8 +313,10 @@ def list_session_token_usage(
             row["id"] = str(row.pop("_id"))
         if "timestamp" in row and hasattr(row["timestamp"], "isoformat"):
             row["timestamp"] = row["timestamp"].isoformat()
+        _attach_record_cost(row)
         records.append(row)
 
+    page_cost = _sum_costs([r.get("estimated_cost_usd") for r in records])
     total_pages = max(1, (total + limit - 1) // limit)
     return {
         "records": records,
@@ -283,6 +324,7 @@ def list_session_token_usage(
         "page": page,
         "limit": limit,
         "total_pages": total_pages,
+        "totals": {"estimated_cost_usd": page_cost},
         "filters": {
             "username": username,
             "user_id": user_id,
@@ -349,13 +391,15 @@ def aggregate_token_usage(
     client = _get_db()
     coll = client.get_collection(SESSION_TOKEN_USAGE_COL)
     buckets = []
+    bucket_costs: List[Optional[float]] = []
     for row in coll.aggregate(pipeline):
         bucket_id = row.get("_id") or {}
         ts = bucket_id.get("bucket")
-        buckets.append({
+        model_id = bucket_id.get("model_id")
+        entry = {
             "bucket": ts.isoformat() if hasattr(ts, "isoformat") else ts,
             "username": bucket_id.get("username"),
-            "model_id": bucket_id.get("model_id"),
+            "model_id": model_id,
             "input_tokens": row.get("input_tokens", 0),
             "output_tokens": row.get("output_tokens", 0),
             "total_tokens": row.get("total_tokens", 0),
@@ -364,9 +408,23 @@ def aggregate_token_usage(
             "call_count": row.get("call_count", 0),
             "error_count": row.get("error_count", 0),
             "avg_latency_ms": round(row.get("avg_latency_ms") or 0, 1),
-        })
+        }
+        entry["estimated_cost_usd"] = _row_estimated_cost_usd(
+            model_id=model_id,
+            input_tokens=entry["input_tokens"],
+            output_tokens=entry["output_tokens"],
+            cache_read_input_tokens=entry["cache_read_input_tokens"],
+            cache_creation_input_tokens=entry["cache_creation_input_tokens"],
+        )
+        bucket_costs.append(entry["estimated_cost_usd"])
+        buckets.append(entry)
 
-    return {"buckets": buckets, "bucket_unit": unit, "filters": {"username": username, "user_id": user_id, "session_id": session_id}}
+    return {
+        "buckets": buckets,
+        "bucket_unit": unit,
+        "filters": {"username": username, "user_id": user_id, "session_id": session_id},
+        "totals": {"estimated_cost_usd": _sum_costs(bucket_costs)},
+    }
 
 
 def list_recent_sessions(
@@ -381,24 +439,56 @@ def list_recent_sessions(
     pipeline = [
         {"$match": {"meta.username": username, "meta.session_id": {"$ne": ""}}},
         {"$group": {
-            "_id": "$meta.session_id",
+            "_id": {
+                "session_id": "$meta.session_id",
+                "model_id": "$meta.model_id",
+            },
             "last_seen": {"$max": "$timestamp"},
             "llm_calls": {"$sum": 1},
             "total_tokens": {"$sum": "$total_tokens"},
+            "input_tokens": {"$sum": "$input_tokens"},
+            "output_tokens": {"$sum": "$output_tokens"},
+            "cache_read_input_tokens": {"$sum": "$cache_read_input_tokens"},
+            "cache_creation_input_tokens": {"$sum": "$cache_creation_input_tokens"},
         }},
         {"$sort": {"last_seen": -1}},
-        {"$limit": max(1, min(limit, 50))},
     ]
-    sessions = []
+    by_session: Dict[str, Dict[str, Any]] = {}
     for row in usage_coll.aggregate(pipeline):
+        sid = (row.get("_id") or {}).get("session_id")
+        if not sid:
+            continue
+        model_id = (row.get("_id") or {}).get("model_id")
         last = row.get("last_seen")
-        sessions.append({
-            "session_id": row.get("_id"),
-            "last_seen": last.isoformat() if hasattr(last, "isoformat") else last,
-            "llm_calls": row.get("llm_calls", 0),
-            "total_tokens": row.get("total_tokens", 0),
+        cost = _row_estimated_cost_usd(
+            model_id=model_id,
+            input_tokens=row.get("input_tokens", 0),
+            output_tokens=row.get("output_tokens", 0),
+            cache_read_input_tokens=row.get("cache_read_input_tokens", 0),
+            cache_creation_input_tokens=row.get("cache_creation_input_tokens", 0),
+        )
+        entry = by_session.setdefault(sid, {
+            "session_id": sid,
+            "last_seen": last,
+            "llm_calls": 0,
+            "total_tokens": 0,
+            "estimated_cost_usd": None,
+            "_cost_parts": [],
         })
-    return {"sessions": sessions}
+        if last and (entry["last_seen"] is None or last > entry["last_seen"]):
+            entry["last_seen"] = last
+        entry["llm_calls"] += row.get("llm_calls", 0)
+        entry["total_tokens"] += row.get("total_tokens", 0)
+        entry["_cost_parts"].append(cost)
+
+    sessions = []
+    for entry in by_session.values():
+        entry["estimated_cost_usd"] = _sum_costs(entry.pop("_cost_parts", []))
+        last = entry.get("last_seen")
+        entry["last_seen"] = last.isoformat() if hasattr(last, "isoformat") else last
+        sessions.append(entry)
+    sessions.sort(key=lambda s: s.get("last_seen") or "", reverse=True)
+    return {"sessions": sessions[: max(1, min(limit, 50))]}
 
 
 def aggregate_session_timeline(
@@ -438,7 +528,10 @@ def aggregate_session_timeline(
     usage_pipeline: List[Dict[str, Any]] = [
         {"$match": usage_match},
         {"$group": {
-            "_id": {"$dateTrunc": {"date": "$timestamp", "unit": unit}},
+            "_id": {
+                "bucket": {"$dateTrunc": {"date": "$timestamp", "unit": unit}},
+                "model_id": "$meta.model_id",
+            },
             "total_tokens": {"$sum": "$total_tokens"},
             "input_tokens": {"$sum": "$input_tokens"},
             "output_tokens": {"$sum": "$output_tokens"},
@@ -466,16 +559,23 @@ def aggregate_session_timeline(
         return str(ts)
 
     for row in usage_coll.aggregate(usage_pipeline):
-        key = _bucket_key(row.get("_id"))
-        by_bucket.setdefault(key, {"bucket": key})
-        by_bucket[key].update({
-            "total_tokens": row.get("total_tokens", 0),
-            "input_tokens": row.get("input_tokens", 0),
-            "output_tokens": row.get("output_tokens", 0),
-            "cache_read_input_tokens": row.get("cache_read_input_tokens", 0),
-            "cache_creation_input_tokens": row.get("cache_creation_input_tokens", 0),
-            "llm_calls": row.get("llm_calls", 0),
-        })
+        bucket_id = row.get("_id") or {}
+        key = _bucket_key(bucket_id.get("bucket"))
+        model_id = bucket_id.get("model_id")
+        by_bucket.setdefault(key, {"bucket": key, "_cost_parts": []})
+        pt = by_bucket[key]
+        for field in (
+            "total_tokens", "input_tokens", "output_tokens",
+            "cache_read_input_tokens", "cache_creation_input_tokens", "llm_calls",
+        ):
+            pt[field] = pt.get(field, 0) + int(row.get(field, 0) or 0)
+        pt["_cost_parts"].append(_row_estimated_cost_usd(
+            model_id=model_id,
+            input_tokens=row.get("input_tokens", 0),
+            output_tokens=row.get("output_tokens", 0),
+            cache_read_input_tokens=row.get("cache_read_input_tokens", 0),
+            cache_creation_input_tokens=row.get("cache_creation_input_tokens", 0),
+        ))
 
     for row in events_coll.aggregate(events_pipeline):
         bucket_id = row.get("_id") or {}
@@ -487,6 +587,7 @@ def aggregate_session_timeline(
     points = []
     for key in sorted(by_bucket.keys()):
         pt = by_bucket[key]
+        cost_parts = pt.pop("_cost_parts", [])
         points.append({
             "bucket": pt.get("bucket", key),
             "total_tokens": pt.get("total_tokens", 0),
@@ -495,6 +596,7 @@ def aggregate_session_timeline(
             "cache_read_input_tokens": pt.get("cache_read_input_tokens", 0),
             "cache_creation_input_tokens": pt.get("cache_creation_input_tokens", 0),
             "llm_calls": pt.get("llm_calls", 0),
+            "estimated_cost_usd": _sum_costs(cost_parts),
             "strategy_recall": pt.get(EVENT_STRATEGY_RECALL, 0),
             "strategy_store": pt.get(EVENT_STRATEGY_STORE, 0),
             "tool_cache_hit": pt.get(EVENT_TOOL_CACHE_HIT, 0),

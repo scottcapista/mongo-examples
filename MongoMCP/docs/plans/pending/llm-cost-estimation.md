@@ -1,28 +1,30 @@
 ---
 name: LLM cost estimation
-status: pending
+status: done
 order: 2
 overview: Add a shared, extensible model pricing registry (starting with Claude Sonnet 4.6) and compute estimated USD costs at API/read time across the admin Token Usage UI, live chat progress messages, and the session timeline chart.
 todos:
   - id: pricing-module
     content: Create mongomcp/model_pricing.py with ModelPricing registry, resolve_model_id, estimate_cost_usd, and unit tests
-    status: pending
+    status: completed
   - id: backend-enrich
     content: Add estimated_cost_usd to list/summary/sessions/timeline in session_token_usage_service.py; optional GET /admin/model-pricing
-    status: pending
+    status: completed
   - id: chat-progress
     content: Append est. cost to Token Usage progress line in mcp_processor.py
-    status: pending
+    status: completed
   - id: admin-ui
     content: Add formatCost, cost columns, session labels, and toolbar KPI in SessionTokenUsage.jsx
-    status: pending
+    status: completed
   - id: timeline-chart
     content: Add estimated_cost_usd series and USD axis to SessionTimelineChart.jsx
-    status: pending
+    status: completed
   - id: playwright-validate
     content: "Headless Playwright validation: admin tables, chat progress line, timeline cost series"
-    status: pending
+    status: completed
 ---
+
+**Completed:** 2026-06-28 — branch `feature/batch-2026-06-28-llm-cost-estimation`
 
 # LLM cost estimation (multi-model ready)
 

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import SessionTimelineChart from './SessionTimelineChart'
+import { costFromUsage, formatCost } from './formatCost'
 
 const API_URL = import.meta.env.VITE_API_URL || ''
 const FETCH_OPTS = { credentials: 'include' }
@@ -21,7 +22,8 @@ function formatSessionLabel(s) {
   if (!s?.session_id) return '—'
   const short = s.session_id.length > 12 ? `${s.session_id.slice(0, 12)}…` : s.session_id
   const when = s.last_seen ? formatTs(s.last_seen) : ''
-  return `${short} (${formatTokens(s.total_tokens)} tok, ${when})`
+  const cost = s.estimated_cost_usd != null ? `, ${formatCost(s.estimated_cost_usd)}` : ''
+  return `${short} (${formatTokens(s.total_tokens)} tok${cost}, ${when})`
 }
 
 function StatusBadge({ status }) {
@@ -48,6 +50,11 @@ export default function SessionTokenUsage({ username, authUser }) {
   const [historyLoading, setHistoryLoading] = useState(false)
 
   const email = authUser?.email || username
+
+  const summarySpend = (summary?.totals?.estimated_cost_usd ?? summary?.buckets?.reduce(
+    (sum, row) => sum + (row.estimated_cost_usd || 0),
+    0,
+  )) ?? null
 
   const loadData = useCallback(async (p, bucketUnit, selectedSession, chartBucket) => {
     if (!email) return
@@ -142,6 +149,12 @@ export default function SessionTokenUsage({ username, authUser }) {
           <p className="user-memory__subtitle">
             Per-LLM-call metrics for <strong>{email}</strong>
           </p>
+          {summarySpend != null && (
+            <p className="usage-kpi">
+              Estimated spend (visible summary): <strong>{formatCost(summarySpend)}</strong>
+              <span className="usage-kpi__note"> at current model rates</span>
+            </p>
+          )}
         </div>
       </div>
 
@@ -217,6 +230,7 @@ export default function SessionTokenUsage({ username, authUser }) {
                   <th>Cache read</th>
                   <th>Cache write</th>
                   <th>Total</th>
+                  <th className="usage-cost">Est. cost</th>
                   <th>Avg latency</th>
                 </tr>
               </thead>
@@ -232,6 +246,7 @@ export default function SessionTokenUsage({ username, authUser }) {
                     <td>{formatTokens(row.cache_read_input_tokens)}</td>
                     <td>{formatTokens(row.cache_creation_input_tokens)}</td>
                     <td>{formatTokens(row.total_tokens)}</td>
+                    <td className="usage-cost">{formatCost(row.estimated_cost_usd)}</td>
                     <td>{row.avg_latency_ms} ms</td>
                   </tr>
                 ))}
@@ -261,12 +276,14 @@ export default function SessionTokenUsage({ username, authUser }) {
                     <th>Time</th>
                     <th>Session</th>
                     <th>Iter</th>
+                    <th>Model</th>
                     <th>Status</th>
                     <th>In</th>
                     <th>Out</th>
                     <th>Cache read</th>
                     <th>Cache write</th>
                     <th>Total</th>
+                    <th className="usage-cost">Est. cost</th>
                     <th>Latency</th>
                     <th>History</th>
                   </tr>
@@ -281,6 +298,7 @@ export default function SessionTokenUsage({ username, authUser }) {
                           : '—'}
                       </td>
                       <td>{row.iteration ?? '—'}</td>
+                      <td className="usage-table__mono">{row.meta?.model_id || '—'}</td>
                       <td>
                         <StatusBadge status={row.status} />
                         {row.error && (
@@ -292,6 +310,7 @@ export default function SessionTokenUsage({ username, authUser }) {
                       <td>{formatTokens(row.cache_read_input_tokens)}</td>
                       <td>{formatTokens(row.cache_creation_input_tokens)}</td>
                       <td>{formatTokens(row.total_tokens)}</td>
+                      <td className="usage-cost">{formatCost(row.estimated_cost_usd)}</td>
                       <td>{row.latency_ms != null ? `${Math.round(row.latency_ms)} ms` : '—'}</td>
                       <td>
                         {row.llm_history_id ? (
@@ -345,7 +364,19 @@ export default function SessionTokenUsage({ username, authUser }) {
             {historyLoading && <p className="admin-loading-inline">Loading…</p>}
             {historyDetail?.error && <p className="admin-error">{historyDetail.error}</p>}
             {historyDetail && !historyDetail.error && (
-              <pre className="usage-modal__body">{JSON.stringify(historyDetail, null, 2)}</pre>
+              <>
+                <p className="usage-modal__cost">
+                  Est. cost:{' '}
+                  {formatCost(
+                    historyDetail.estimated_cost_usd
+                    ?? costFromUsage(historyDetail.usage, historyDetail.model_id),
+                  )}
+                  {historyDetail.model_id && (
+                    <span className="usage-modal__model"> · {historyDetail.model_id}</span>
+                  )}
+                </p>
+                <pre className="usage-modal__body">{JSON.stringify(historyDetail, null, 2)}</pre>
+              </>
             )}
           </div>
         </div>

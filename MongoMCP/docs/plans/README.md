@@ -51,7 +51,6 @@ Headless batch sessions: auto-commit and auto-merge are pre-authorized when vali
 
 | Order | Plan | Status |
 |-------|------|--------|
-| 2 | [llm-cost-estimation.md](unfinished/llm-cost-estimation.md) | pending |
 | 3 | [authenticated-chat-history.md](unfinished/authenticated-chat-history.md) | pending |
 | 3 | [iteration-summary-popovers.md](unfinished/iteration-summary-popovers.md) | pending |
 | 3 | [token-usage-chart-clarity.md](unfinished/token-usage-chart-clarity.md) | pending |

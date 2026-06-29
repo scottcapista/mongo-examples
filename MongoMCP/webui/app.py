@@ -37,6 +37,7 @@ from session_token_usage_service import (
     list_recent_sessions,
     list_session_token_usage,
 )
+from mongomcp.model_pricing import export_model_pricing
 from mongomcp.datasets.discovery import discover_cluster_datasets
 from mongomcp import __version__ as MCP_VERSION
 import mimetypes
@@ -726,6 +727,19 @@ def admin_session_token_usage_summary():
             from_ts=from_ts,
             to_ts=to_ts,
         )), 200
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route('/admin/model-pricing', methods=['GET'])
+def admin_model_pricing():
+    """Read-only export of LLM pricing registry for UI footnotes."""
+    try:
+        user = get_user_from_session()
+        if not user:
+            return jsonify({"error": "Sign in to view model pricing"}), 401
+        return jsonify({"models": export_model_pricing()}), 200
     except Exception as e:
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
