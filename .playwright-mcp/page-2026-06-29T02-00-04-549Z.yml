@@ -1,0 +1,43 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - img "Logo" [ref=e5]
+    - heading "MongoDB Atlas MCP AI Demo" [level=1] [ref=e6]
+    - navigation "Main navigation" [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]
+      - button "Admin" [active] [ref=e9] [cursor=pointer]
+    - generic [ref=e10]:
+      - generic "dev-user@localhost" [ref=e11]: dev-user
+      - link "Sign out" [ref=e12] [cursor=pointer]:
+        - /url: /auth/logout
+  - generic [ref=e22]:
+    - complementary [ref=e23]:
+      - navigation [ref=e24]:
+        - button "Datasets" [ref=e25] [cursor=pointer]
+        - button "User Memory" [ref=e26] [cursor=pointer]
+        - button "Token Usage" [ref=e27] [cursor=pointer]
+    - main [ref=e28]:
+      - generic [ref=e29]:
+        - generic [ref=e30]:
+          - heading "Datasets" [level=2] [ref=e31]
+          - button "+ New dataset" [ref=e32] [cursor=pointer]
+        - generic [ref=e33]:
+          - button "Config filerouter.calendarEvents Auto-discovered collection filerouter.calendarEvents (3587 docs, 6 db indexes, 1 vector, 2 search) Cluster · 3587 records · system · idx 6/2/1" [ref=e34] [cursor=pointer]:
+            - generic [ref=e35]: Config
+            - heading "filerouter.calendarEvents" [level=3] [ref=e36]
+            - paragraph [ref=e37]: Auto-discovered collection filerouter.calendarEvents (3587 docs, 6 db indexes, 1 vector, 2 search)
+            - generic [ref=e38]: Cluster · 3587 records · system · idx 6/2/1
+          - button "Config filerouter.fileJobs Auto-discovered collection filerouter.fileJobs (1 docs, 8 db indexes, 0 vector, 0 search) Cluster · 1 records · system · idx 8/0/0" [ref=e39] [cursor=pointer]:
+            - generic [ref=e40]: Config
+            - heading "filerouter.fileJobs" [level=3] [ref=e41]
+            - paragraph [ref=e42]: Auto-discovered collection filerouter.fileJobs (1 docs, 8 db indexes, 0 vector, 0 search)
+            - generic [ref=e43]: Cluster · 1 records · system · idx 8/0/0
+          - button "Config filerouter.prompts Auto-discovered collection filerouter.prompts (1 docs, 2 db indexes, 0 vector, 0 search) Cluster · 1 records · system · idx 2/0/0" [ref=e44] [cursor=pointer]:
+            - generic [ref=e45]: Config
+            - heading "filerouter.prompts" [level=3] [ref=e46]
+            - paragraph [ref=e47]: Auto-discovered collection filerouter.prompts (1 docs, 2 db indexes, 0 vector, 0 search)
+            - generic [ref=e48]: Cluster · 1 records · system · idx 2/0/0
+          - button "Config filerouter.rules Auto-discovered collection filerouter.rules (22 docs, 3 db indexes, 0 vector, 0 search) Cluster · 22 records · system · idx 3/0/0" [ref=e49] [cursor=pointer]:
+            - generic [ref=e50]: Config
+            - heading "filerouter.rules" [level=3] [ref=e51]
+            - paragraph [ref=e52]: Auto-discovered collection filerouter.rules (22 docs, 3 db indexes, 0 vector, 0 search)
+            - generic [ref=e53]: Cluster · 22 records · system · idx 3/0/0

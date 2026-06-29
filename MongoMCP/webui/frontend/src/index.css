@@ -305,6 +305,48 @@ button {
   color: var(--mdb-mid);
 }
 
+.training-mode-toggle {
+  margin-left: 12px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  border: 1px solid #c5e8d4;
+  border-radius: 8px;
+  background: #fff;
+  color: #00684A;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.training-mode-toggle:hover:not(:disabled) {
+  background: var(--mdb-light-green);
+}
+
+.training-mode-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.training-mode-toggle--active {
+  background: #00684A;
+  border-color: #00684A;
+  color: #fff;
+}
+
+.training-mode-banner {
+  background: #e8f8ef;
+  border-bottom: 1px solid #b8e6c8;
+  color: #004d35;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: center;
+  padding: 8px 16px;
+}
+
+.chat-body--training {
+  box-shadow: inset 0 0 0 2px rgba(0, 104, 74, 0.15);
+}
+
 .tab-active {
   background: var(--mdb-light-green);
   color: var(--mdb-mid);

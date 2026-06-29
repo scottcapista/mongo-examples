@@ -129,8 +129,20 @@ def health():
     }), 200
 
 
+def _training_mode_auth_error(payload: dict) -> Optional[Tuple[dict, int]]:
+    """Reject training_mode requests without an authenticated OIDC session."""
+    if not payload.get("training_mode"):
+        return None
+    if get_user_from_session():
+        return None
+    return ({"error": "Sign in required for training mode"}, 401)
+
+
 def _build_query_request(payload: dict) -> Tuple[Optional[QueryRequest], Optional[Tuple[dict, int]]]:
     """Build QueryRequest with OIDC identity when session is present."""
+    tm_err = _training_mode_auth_error(payload)
+    if tm_err:
+        return None, tm_err
     user_id, username, err = resolve_query_identity(payload)
     if err:
         return None, err
@@ -143,6 +155,7 @@ def _build_query_request(payload: dict) -> Tuple[Optional[QueryRequest], Optiona
         user_id=user_id,
         username=username,
         session_id=payload.get("session_id"),
+        training_mode=bool(payload.get("training_mode")),
     ), None
 
 
@@ -257,10 +270,20 @@ def save_pattern():
         if processor.init_error:
             raise ValueError(f"Processor initialization failed: {processor.init_error}")
         payload = request.get_json(force=True) or {}
-        user_id = (payload.get("user_id") or "").strip()
+        tm_err = _training_mode_auth_error(payload)
+        if tm_err:
+            return jsonify(tm_err[0]), tm_err[1]
+        user = get_user_from_session()
+        user_id = (user.sub if user else (payload.get("user_id") or "")).strip()
         session_id = (payload.get("session_id") or "").strip()
         history = payload.get("history") or []
-        resp = processor.save_pattern(user_id, session_id, history)
+        training_mode = bool(payload.get("training_mode"))
+        username = user.email if user else payload.get("username")
+        resp = processor.save_pattern(
+            user_id, session_id, history,
+            training_mode=training_mode,
+            username=username,
+        )
         return jsonify(resp.json()), 200
     except Exception as e:
         traceback.print_exc()
@@ -274,13 +297,23 @@ def record_feedback():
         if processor.init_error:
             raise ValueError(f"Processor initialization failed: {processor.init_error}")
         payload = request.get_json(force=True)
-        user_id = (payload.get("user_id") or "").strip()
+        tm_err = _training_mode_auth_error(payload)
+        if tm_err:
+            return jsonify(tm_err[0]), tm_err[1]
+        user = get_user_from_session()
+        user_id = (user.sub if user else (payload.get("user_id") or "")).strip()
         session_id = (payload.get("session_id") or "").strip()
         feedback = (payload.get("feedback") or "").strip()
         history = payload.get("history") or []
+        training_mode = bool(payload.get("training_mode"))
+        username = user.email if user else payload.get("username")
         if not user_id or not session_id or feedback not in ("positive", "negative"):
             return jsonify({"error": "user_id, session_id, and feedback (positive|negative) required"}), 400
-        resp = processor.record_feedback(user_id, session_id, feedback, history)
+        resp = processor.record_feedback(
+            user_id, session_id, feedback, history,
+            training_mode=training_mode,
+            username=username,
+        )
         return jsonify(resp.json()), 200
     except Exception as e:
         traceback.print_exc()
@@ -302,6 +335,11 @@ def generate(payload, user_id=None, username=None):
             if err:
                 yield json.dumps(err[0]) + '\n'
                 return
+
+        tm_err = _training_mode_auth_error(payload)
+        if tm_err:
+            yield json.dumps(tm_err[0]) + '\n'
+            return
 
         local_queue = queue.Queue()
 
@@ -376,6 +414,7 @@ def generate(payload, user_id=None, username=None):
             user_id=user_id,
             username=username,
             session_id=payload.get("session_id"),
+            training_mode=bool(payload.get("training_mode")),
         )
         for item in execute_in_thread(lambda: processor.query_with_mcp_tools(req, emit=emit_local)):
             if isinstance(item, tuple):

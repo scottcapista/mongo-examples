@@ -243,6 +243,9 @@ class ToolRouter:
         self,
         question: str,
         routing_prompt: Optional[str] = None,
+        *,
+        scope: Optional[int] = None,
+        username: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[str]]:
         """Route a question via LLM tool selection (no pattern-cache lookup).
 
@@ -323,12 +326,17 @@ class ToolRouter:
         if pattern and store_fn and non_memory_selected:
             try:
                 composite = self._build_strategy_content(pattern, non_memory_selected)
-                await store_fn(
-                    name=pattern,
-                    description=composite,
-                    payload={"tools": non_memory_selected},
-                    schema_version="routing_pattern",
-                )
+                store_kwargs: Dict[str, Any] = {
+                    "name": pattern,
+                    "context": composite,
+                    "payload": {"tools": non_memory_selected},
+                    "schema_version": "routing_pattern",
+                }
+                if scope is not None:
+                    store_kwargs["scope"] = scope
+                if username is not None:
+                    store_kwargs["username"] = username
+                await store_fn(**store_kwargs)
             except Exception as exc:
                 logger.warning("Failed to store routing strategy: %s", exc)
 
@@ -451,7 +459,14 @@ class ToolRouter:
         ]
 
     async def record_pattern(
-        self, history: list, response_text: str, jsondata: Any = None, question: Optional[str] = None,
+        self,
+        history: list,
+        response_text: str,
+        jsondata: Any = None,
+        question: Optional[str] = None,
+        *,
+        scope: Optional[int] = None,
+        username: Optional[str] = None,
     ) -> None:
         """Generate a PII-free playbook from a completed interaction and save it.
 
@@ -562,12 +577,17 @@ class ToolRouter:
                     dict.fromkeys([question] + payload.get("example_queries", []))
                 )[:10]
 
-            await store_fn(
-                name=self._last_pattern,
-                description=composite,
-                payload=payload,
-                schema_version="routing_pattern",
-            )
+            store_kwargs: Dict[str, Any] = {
+                "name": self._last_pattern,
+                "context": composite,
+                "payload": payload,
+                "schema_version": "routing_pattern",
+            }
+            if scope is not None:
+                store_kwargs["scope"] = scope
+            if username is not None:
+                store_kwargs["username"] = username
+            await store_fn(**store_kwargs)
             self.message_handler(
                 f"Saved playbook for pattern: {self._last_pattern}",
                 status="Strategy Store",

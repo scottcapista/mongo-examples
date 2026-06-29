@@ -1,0 +1,22 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - img "Logo" [ref=e5]
+    - heading "MongoDB Atlas MCP AI Demo" [level=1] [ref=e6]
+    - navigation "Main navigation" [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]
+      - button "Admin" [ref=e9] [cursor=pointer]
+    - button "Training" [active] [pressed] [ref=e10] [cursor=pointer]
+    - generic [ref=e11]:
+      - generic "dev-user@localhost" [ref=e22]: dev-user
+      - link "Sign out" [ref=e23] [cursor=pointer]:
+        - /url: /auth/logout
+  - status [ref=e24]: Training mode — strategies apply to all users
+  - main [ref=e13]:
+    - generic [ref=e14]: Ask anything — your conversation will appear here.
+  - contentinfo [ref=e15]:
+    - generic [ref=e16]:
+      - textbox "Ask anything… (Enter to send, Shift+Enter for new line)" [ref=e17]
+      - button "Send" [ref=e18] [cursor=pointer]
+    - generic [ref=e19]:
+      - button "Clear chat" [ref=e20] [cursor=pointer]
+      - button "Reset backend" [ref=e21] [cursor=pointer]

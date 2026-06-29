@@ -103,6 +103,8 @@ function parseHistoryToTurns(history) {
   return turns
 }
 
+const TRAINING_MODE_KEY = 'mcp_training_mode'
+
 export default function App() {
   const [question, setQuestion] = useState('')
   const [history, setHistory] = useState(null)
@@ -123,6 +125,7 @@ export default function App() {
   const [reasoningSteps, setReasoningSteps] = useState([])
   const [pendingQuestion, setPendingQuestion] = useState(null)
   const [activeTab, setActiveTab] = useState('chat')
+  const [trainingMode, setTrainingMode] = useState(false)
 
   const [anonymousUserId] = useState(() => {
     let id = localStorage.getItem('mcp_user_id')
@@ -167,6 +170,29 @@ export default function App() {
   useEffect(() => {
     refreshAuth()
   }, [refreshAuth])
+
+  useEffect(() => {
+    if (!authUser) {
+      setTrainingMode(false)
+      return
+    }
+    try {
+      setTrainingMode(localStorage.getItem(TRAINING_MODE_KEY) === '1')
+    } catch {
+      setTrainingMode(false)
+    }
+  }, [authUser])
+
+  function toggleTrainingMode() {
+    if (!authUser) return
+    setTrainingMode(prev => {
+      const next = !prev
+      try {
+        localStorage.setItem(TRAINING_MODE_KEY, next ? '1' : '0')
+      } catch { /* ignore */ }
+      return next
+    })
+  }
 
   useEffect(() => {
     if (chatBodyRef.current) {
@@ -258,7 +284,12 @@ export default function App() {
         ...FETCH_OPTS,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, session_id: sessionId, history }),
+        body: JSON.stringify({
+          user_id: userId,
+          session_id: sessionId,
+          history,
+          training_mode: trainingMode,
+        }),
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to save pattern')
@@ -274,7 +305,13 @@ export default function App() {
         ...FETCH_OPTS,
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: userId, session_id: sessionId, feedback, history }),
+        body: JSON.stringify({
+          user_id: userId,
+          session_id: sessionId,
+          feedback,
+          history,
+          training_mode: trainingMode,
+        }),
       })
       if (!res.ok) throw new Error('Failed to record feedback')
       setFeedbackGiven(feedback)
@@ -304,7 +341,12 @@ export default function App() {
     setMapData(null)
     setPendingQuestion(inputToSend)
 
-    const body = { input: inputToSend, history: historyToSend, session_id: sessionToSend }
+    const body = {
+      input: inputToSend,
+      history: historyToSend,
+      session_id: sessionToSend,
+      training_mode: trainingMode && Boolean(authUser),
+    }
 
     try {
       const res = await fetch(`${API_URL}/query/stream`, {
@@ -431,6 +473,18 @@ export default function App() {
             Admin
           </button>
         </nav>
+        {activeTab === 'chat' && (
+          <button
+            type="button"
+            className={`training-mode-toggle ${trainingMode ? 'training-mode-toggle--active' : ''}`}
+            onClick={toggleTrainingMode}
+            disabled={!authUser}
+            title={authUser ? 'Train org-wide strategies (scope=0)' : 'Sign in to train org-wide strategies'}
+            aria-pressed={trainingMode}
+          >
+            Training
+          </button>
+        )}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
           {authUser ? (
             <>
@@ -449,6 +503,12 @@ export default function App() {
         </div>
       </header>
 
+      {activeTab === 'chat' && trainingMode && authUser && (
+        <div className="training-mode-banner" role="status">
+          Training mode — strategies apply to all users
+        </div>
+      )}
+
       {activeTab === 'admin' ? (
         <AdminPanel username={username} authUser={authUser} />
       ) : showSignInGate ? (
@@ -462,7 +522,7 @@ export default function App() {
         </main>
       ) : (
         <>
-      <main className="chat-body" ref={chatBodyRef}>
+      <main className={`chat-body${trainingMode && authUser ? ' chat-body--training' : ''}`} ref={chatBodyRef}>
         {visibleTurns.length === 0 && !loading && (
           <div style={{ textAlign: 'center', color: '#aaa', marginTop: 60, fontSize: 14 }}>
             Ask anything — your conversation will appear here.
@@ -524,7 +584,7 @@ export default function App() {
         {lastTurn?.assistantText && !loading && (
           <div style={{ display: 'flex', gap: 8, marginBottom: 8, alignItems: 'center' }}>
             <button className="btn-secondary" onClick={savePattern} disabled={patternSaved || patternSaving} style={{ fontSize: 13 }}>
-              {patternSaved ? '✅ Saved' : patternSaving ? '⏳' : '👍 Save pattern'}
+              {patternSaved ? '✅ Saved' : patternSaving ? '⏳' : trainingMode ? '💾 Save org strategy' : '👍 Save pattern'}
             </button>
             <button
               className="btn-secondary"

@@ -1,0 +1,46 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - img "Logo" [ref=e5]
+    - heading "MongoDB Atlas MCP AI Demo" [level=1] [ref=e6]
+    - navigation "Main navigation" [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]
+      - button "Admin" [ref=e9] [cursor=pointer]
+    - generic [ref=e10]:
+      - generic "dev-user@localhost" [ref=e11]: dev-user
+      - link "Sign out" [ref=e12] [cursor=pointer]:
+        - /url: /auth/logout
+  - generic [ref=e22]:
+    - complementary [ref=e23]:
+      - navigation [ref=e24]:
+        - button "Datasets" [ref=e25] [cursor=pointer]
+        - button "User Memory" [ref=e26] [cursor=pointer]
+        - button "Token Usage" [active] [ref=e27] [cursor=pointer]
+    - main [ref=e28]:
+      - generic [ref=e54]:
+        - generic [ref=e56]:
+          - heading "Token Usage" [level=2] [ref=e57]
+          - paragraph [ref=e58]:
+            - text: Per-LLM-call metrics for
+            - strong [ref=e59]: dev-user@localhost
+        - generic [ref=e60]:
+          - generic [ref=e61]:
+            - generic [ref=e62]: Session
+            - combobox "Session" [ref=e63]:
+              - option "All sessions" [selected]
+          - generic [ref=e64]:
+            - generic [ref=e65]: Summary bucket
+            - combobox "Summary bucket" [ref=e66]:
+              - option "Hour"
+              - option "Day" [selected]
+              - option "Month"
+          - generic [ref=e67]:
+            - generic [ref=e68]: Chart bucket
+            - combobox "Chart bucket" [ref=e69]:
+              - option "Hour" [selected]
+              - option "Day"
+              - option "Month"
+        - generic [ref=e70]:
+          - heading "LLM calls (0 total)" [level=3] [ref=e71]:
+            - text: LLM calls
+            - generic [ref=e72]: (0 total)
+          - paragraph [ref=e73]: No usage records yet. Send a chat message to generate LLM call metrics.

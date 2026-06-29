@@ -1,31 +1,33 @@
 ---
 name: Training Mode UI
-status: pending
+status: done
 order: 1
 overview: "Add a signed-in-only Training mode toggle to the chat UI that changes how the backend handles queries and pattern saves: skip per-user personalization, inject org-wide training instructions, and enforce scope=0 on all strategy_store writes via memory_strategy_store."
 todos:
   - id: ui-toggle
     content: Add Training mode toggle, banner, and localStorage persistence in App.jsx + CSS; pass training_mode on query/save/feedback API calls
-    status: pending
+    status: completed
   - id: api-contract
     content: Extend QueryRequest with training_mode; add auth gate in app.py for unsigned requests
-    status: pending
+    status: completed
   - id: processor-behavior
     content: Skip user prefetch, inject training instructions, set _training_mode, enforce scope=0 in _call_mcp_tool for strategy_store
-    status: pending
+    status: completed
   - id: save-pattern
     content: Stash last turn state; refactor save_pattern and positive feedback to use ToolRouter.record_pattern with scope=0 in training mode
-    status: pending
+    status: completed
   - id: tool-router-fix
     content: Fix description→context kwarg; thread scope param through record_pattern and route_via_llm auto-save
-    status: pending
+    status: completed
   - id: seed-strategy
     content: Add idempotent seed script for training_mode_instructions strategy (scope=0) in memory_semantic
-    status: pending
+    status: completed
   - id: playwright-validate
     content: "Headless Playwright validation: toggle on, save strategy, confirm scope=0 in cluster/UI"
-    status: pending
+    status: completed
 ---
+
+**Completed:** 2026-06-28 — branch `feature/batch-2026-06-28-training-mode-ui`
 
 # Training Mode UI Plan
 

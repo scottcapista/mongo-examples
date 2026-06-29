@@ -1,0 +1,50 @@
+---
+description: Validate visible UI changes with headless Playwright; diagnose, fix, or escalate with a clear failure report.
+alwaysApply: true
+---
+
+# UI change validation workflow
+
+Whenever you implement a UI change the user expects to see on screen:
+
+## 1. Validate (required)
+
+Use **Playwright MCP in headless mode** (`--headless` in `~/.cursor/mcp.json`):
+
+- Navigate to the affected page/flow
+- Exercise **backend functionality** (API calls, auth, data loading — not layout only)
+- Capture `browser_take_screenshot` to confirm the UI looks correct
+- Do not skip validation for visible UI work
+
+### Auth-gated UI (Token Usage, User Memory, chat when `AUTH_REQUIRED=true`)
+
+When the flow requires a signed-in user, use the local dev login endpoint **before** testing (requires `DEV_AUTH_LOGIN=true` and `DEV_AUTH_SECRET` in `MongoMCP/.env`; restart Flask after changes):
+
+```
+http://127.0.0.1:8001/auth/dev-login?secret=<DEV_AUTH_SECRET>&email=<optional>
+```
+
+Use the **same host** (`127.0.0.1` or `localhost`) for dev-login and all later navigations — session cookies are not shared across hosts.
+
+Then navigate to `/` and confirm `/auth/me` succeeds (no 401 in console) before exercising auth-gated admin tabs or chat.
+
+If dev auth is not configured, fall back to reporting manual OIDC sign-in as a human-only step.
+
+## 2. If validation fails — diagnose and fix
+
+- Read errors (browser console, network, server logs, API responses)
+- Apply a targeted fix
+- Re-run Playwright validation until it passes or you are blocked
+
+## 3. If still failing — report to the user
+
+Do not leave failures silent. Include:
+
+1. **What you tried** — steps and rationale for each attempt
+2. **Errors** — exact messages/status codes from each try
+3. **Human-only next steps** — things you cannot do (e.g. restart services, set `DEV_AUTH_*` in `.env`, OIDC IdP redirect, hard refresh, start MCP on :8000)
+
+## Constraints
+
+- Never use **headed** Playwright (steals focus from Cursor)
+- Prefer headless navigate + snapshot + screenshot over opening a visible browser window

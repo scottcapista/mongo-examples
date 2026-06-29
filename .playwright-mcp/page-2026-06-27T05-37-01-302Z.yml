@@ -1,0 +1,41 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - img "Logo" [ref=e5]
+    - heading "MongoDB Atlas MCP AI Demo" [level=1] [ref=e6]
+    - navigation "Main navigation" [ref=e7]:
+      - button "Chat" [ref=e8] [cursor=pointer]
+      - button "Admin" [active] [ref=e9] [cursor=pointer]
+    - generic [ref=e10]:
+      - generic [ref=e11]: "User:"
+      - textbox "User:" [ref=e12]: demo-user
+      - button "Save" [ref=e13] [cursor=pointer]
+  - generic [ref=e22]:
+    - complementary [ref=e23]:
+      - navigation [ref=e24]:
+        - button "Datasets" [ref=e25] [cursor=pointer]
+    - main [ref=e26]:
+      - generic [ref=e27]:
+        - generic [ref=e28]:
+          - heading "Datasets" [level=2] [ref=e29]
+          - button "+ New dataset" [ref=e30] [cursor=pointer]
+        - generic [ref=e31]:
+          - button "Config filerouter.calendarEvents Auto-discovered collection filerouter.calendarEvents (3587 docs, 6 db indexes, 1 vector, 2 search) 3587 records · system" [ref=e32] [cursor=pointer]:
+            - generic [ref=e33]: Config
+            - heading "filerouter.calendarEvents" [level=3] [ref=e34]
+            - paragraph [ref=e35]: Auto-discovered collection filerouter.calendarEvents (3587 docs, 6 db indexes, 1 vector, 2 search)
+            - generic [ref=e36]: 3587 records · system
+          - button "Config filerouter.fileJobs Auto-discovered collection filerouter.fileJobs (1 docs, 8 db indexes, 0 vector, 0 search) 1 records · system" [ref=e37] [cursor=pointer]:
+            - generic [ref=e38]: Config
+            - heading "filerouter.fileJobs" [level=3] [ref=e39]
+            - paragraph [ref=e40]: Auto-discovered collection filerouter.fileJobs (1 docs, 8 db indexes, 0 vector, 0 search)
+            - generic [ref=e41]: 1 records · system
+          - button "Config filerouter.prompts Auto-discovered collection filerouter.prompts (1 docs, 2 db indexes, 0 vector, 0 search) 1 records · system" [ref=e42] [cursor=pointer]:
+            - generic [ref=e43]: Config
+            - heading "filerouter.prompts" [level=3] [ref=e44]
+            - paragraph [ref=e45]: Auto-discovered collection filerouter.prompts (1 docs, 2 db indexes, 0 vector, 0 search)
+            - generic [ref=e46]: 1 records · system
+          - button "Config filerouter.rules Auto-discovered collection filerouter.rules (22 docs, 3 db indexes, 0 vector, 0 search) 22 records · system" [ref=e47] [cursor=pointer]:
+            - generic [ref=e48]: Config
+            - heading "filerouter.rules" [level=3] [ref=e49]
+            - paragraph [ref=e50]: Auto-discovered collection filerouter.rules (22 docs, 3 db indexes, 0 vector, 0 search)
+            - generic [ref=e51]: 22 records · system

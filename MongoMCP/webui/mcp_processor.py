@@ -27,6 +27,13 @@ from session_token_usage_service import (
 import logging
 logger = logging.getLogger(__name__)
 
+TRAINING_MODE_FALLBACK = (
+    "You are in **Training mode**. The user speaks on behalf of the entire organization. "
+    "All strategies and playbooks you create must be generalized for all users — use typed "
+    "placeholders for PII, never store user_preference memories. When calling "
+    "memory_strategy_store, always use scope=0 (shared)."
+)
+
 
 class QueryResponse(BaseModel):
     content: Optional[dict] = None
@@ -48,6 +55,7 @@ class QueryRequest(BaseModel):
     user_id: Optional[str] = None
     username: Optional[str] = None
     session_id: Optional[str] = None
+    training_mode: bool = False
 
 
 def _annotate_cached(result: Any) -> Any:
@@ -98,6 +106,13 @@ class APIQueryProcessor:
             self._current_session_id: Optional[str] = None
             self._current_username: Optional[str] = None
             self._current_user_id: Optional[str] = None
+            self._training_mode: bool = False
+            self._training_mode_instructions: Optional[str] = None
+            self._tool_router: Optional[ToolRouter] = None
+            self._last_question: Optional[str] = None
+            self._last_answer: Optional[str] = None
+            self._last_jsondata: Any = None
+            self._last_history: Optional[List[Any]] = None
             _cache_ns = getattr(settings, "CACHE_NAMESPACE", "global")
             self._tool_response_cache = MongoSessionCache(
                 settings, username="webui", session_id=_cache_ns,
@@ -281,6 +296,19 @@ class APIQueryProcessor:
                             db_prompts.append(content)
                 except Exception as exc:
                     logger.warning("Failed to load strategy %s: %s", strategy_name, exc)
+            try:
+                raw = await asyncio.wait_for(
+                    self._call_mcp_tool("memory_strategy_recall", {"name": "training_mode_instructions"}),
+                    timeout=15,
+                )
+                data = json.loads(raw) if isinstance(raw, str) else raw
+                strategies = (data or {}).get("strategies") or (data or {}).get("results", [])
+                if strategies:
+                    content = strategies[0].get("content", "")
+                    if content:
+                        self._training_mode_instructions = content
+            except Exception as exc:
+                logger.warning("Failed to load training_mode_instructions: %s", exc)
 
         if db_prompts:
             system_prompt = [{"text": t} for t in db_prompts]
@@ -376,6 +404,12 @@ class APIQueryProcessor:
             logger.warning("Failed to record tool event %s", event_type, exc_info=True)
 
     async def _call_mcp_tool(self, toolname, tool_input):
+        if isinstance(tool_input, dict):
+            tool_input = dict(tool_input)
+            if self._training_mode and "strategy_store" in toolname:
+                tool_input["scope"] = 0
+                tool_input.pop("session_id", None)
+
         endpoint_name, endpoint_tool_name = self._resolve_endpoint(toolname)
         cfg = self.mcp_endpoint_configs.get(endpoint_name)
         if cfg is None:
@@ -565,12 +599,98 @@ class APIQueryProcessor:
             sections.append("*(no prior session data found)*")
         return "\n\n".join(sections)
 
+    def _training_mode_prompt_block(self) -> str:
+        return self._training_mode_instructions or TRAINING_MODE_FALLBACK
+
+    def _ensure_tool_router(self, emit=None) -> ToolRouter:
+        if self._tool_router is not None:
+            return self._tool_router
+        emit_fn = emit or self._emit
+        processor = self
+
+        async def _strategy_store(**kwargs):
+            args = {k: v for k, v in kwargs.items() if v is not None}
+            if processor._training_mode:
+                args["scope"] = 0
+                args.pop("session_id", None)
+            raw = await processor._call_mcp_tool("memory_strategy_store", args)
+            return json.loads(raw) if isinstance(raw, str) else raw
+
+        async def _strategy_recall(**kwargs):
+            args = {k: v for k, v in kwargs.items() if v is not None}
+            raw = await processor._call_mcp_tool("memory_strategy_recall", args)
+            return json.loads(raw) if isinstance(raw, str) else raw
+
+        memory_fns = {
+            "strategy_store": _strategy_store,
+            "strategy_recall": _strategy_recall,
+        }
+        self._tool_router = ToolRouter(
+            tool_catalog=self.mcp_tools_config or [],
+            llm_client=self.llm_client,
+            message_handler=emit_fn,
+            settings=settings,
+            memory_fns=memory_fns,
+        )
+        return self._tool_router
+
+    @staticmethod
+    def _pattern_name_from_question(question: str) -> str:
+        slug = (question or "trained_pattern").strip().replace("\n", " ")
+        if len(slug) > 80:
+            slug = slug[:77] + "..."
+        return slug or "trained_pattern"
+
+    @staticmethod
+    def _tool_names_from_history(history: Optional[List[Any]]) -> List[str]:
+        names: List[str] = []
+        seen = set()
+        for msg in history or []:
+            if msg.get("role") != "assistant":
+                continue
+            for block in msg.get("content") or []:
+                if not isinstance(block, dict):
+                    continue
+                tu = block.get("toolUse") or (block if block.get("type") == "toolUse" else None)
+                if not tu:
+                    continue
+                name = tu.get("name", "")
+                if name and name not in seen:
+                    seen.add(name)
+                    names.append(name)
+        return names
+
+    async def _save_training_pattern(
+        self,
+        *,
+        history: Optional[List[Any]],
+        question: Optional[str],
+        answer: Optional[str],
+        jsondata: Any,
+        username: Optional[str],
+        emit=None,
+    ) -> None:
+        if not question or not answer or answer.startswith("Error"):
+            raise ValueError("No completed turn available to save as an org strategy.")
+        router = self._ensure_tool_router(emit=emit)
+        router._last_pattern = self._pattern_name_from_question(question)
+        router._last_selected_tools = self._tool_names_from_history(history)
+        await router.record_pattern(
+            list(history or []),
+            answer,
+            jsondata=jsondata,
+            question=question,
+            scope=0,
+            username=username,
+        )
+
     def query_with_mcp_tools(self, request: "QueryRequest", emit=None) -> "QueryResponse":
         emit_fn = emit or self._emit
         # Store session_id so sub-agents can inherit it without the LLM needing to pass it.
         self._current_session_id = request.session_id
         self._current_username = request.username
         self._current_user_id = request.user_id
+        self._training_mode = bool(request.training_mode)
         # History is owned entirely by the frontend — use only what was sent in the request.
         history = self._trim_history(list(request.history or []))
 
@@ -596,7 +716,7 @@ class APIQueryProcessor:
             nonlocal _ctx_block, _ctx_prefetched
             # Once per conversation: pre-fetch user context on the first message.
             prefetch_name = request.username or request.user_id
-            if is_new_session and prefetch_name and not _ctx_prefetched:
+            if is_new_session and prefetch_name and not _ctx_prefetched and not request.training_mode:
                 try:
                     _ctx_block = await self._prefetch_session_context(prefetch_name)
                     logger.info("Session context pre-fetched for user=%s (%d chars)", prefetch_name, len(_ctx_block))
@@ -608,6 +728,8 @@ class APIQueryProcessor:
             effective_system = list(self._base_system_prompt)
             if _ctx_block:
                 effective_system.append({"text": _ctx_block})
+            if request.training_mode:
+                effective_system.append({"text": self._training_mode_prompt_block()})
             self.llm_client.system = effective_system
             self.llm_client.configure_tools(self.mcp_tools_config, self._call_mcp_tool)
             return await self.llm_client.invoke_with_tools_text(messages=msgs)
@@ -700,6 +822,12 @@ class APIQueryProcessor:
             usage_calls=all_usage_calls,
             turn_error=turn_error,
         )
+
+        if not turn_error and answer:
+            self._last_question = request.input
+            self._last_answer = answer
+            self._last_jsondata = jsondata
+            self._last_history = list(updated_history or [])
 
         return QueryResponse(
             status="Query Completed", message="Completed",
@@ -934,7 +1062,35 @@ class APIQueryProcessor:
             "collection_info": self.mongo_collection_info or {},
         }
 
-    def save_pattern(self, user_id: str, session_id: str, history: Optional[List[Any]] = None) -> "QueryResponse":
+    def save_pattern(
+        self,
+        user_id: str,
+        session_id: str,
+        history: Optional[List[Any]] = None,
+        *,
+        training_mode: bool = False,
+        username: Optional[str] = None,
+    ) -> "QueryResponse":
+        if training_mode:
+            prev_training = self._training_mode
+            self._training_mode = True
+            try:
+                asyncio.run(
+                    self._save_training_pattern(
+                        history=history,
+                        question=self._last_question,
+                        answer=self._last_answer,
+                        jsondata=self._last_jsondata,
+                        username=username or self._current_username,
+                    )
+                )
+                return QueryResponse(status="Query Completed", message="Org strategy saved.")
+            except Exception as exc:
+                logger.warning("Training mode pattern save failed: %s", exc)
+                return QueryResponse(status="Error", error=str(exc), message=str(exc))
+            finally:
+                self._training_mode = prev_training
+
         message = (
             f"The user marked this conversation as a useful pattern worth saving. "
             f"Please store the key question, approach, and answer from this session "
@@ -946,7 +1102,36 @@ class APIQueryProcessor:
         req = QueryRequest(input=message, history=history or [], user_id=user_id, session_id=session_id)
         return self.query_with_mcp_tools(req)
 
-    def record_feedback(self, user_id: str, session_id: str, feedback: str, history: Optional[List[Any]] = None) -> "QueryResponse":
+    def record_feedback(
+        self,
+        user_id: str,
+        session_id: str,
+        feedback: str,
+        history: Optional[List[Any]] = None,
+        *,
+        training_mode: bool = False,
+        username: Optional[str] = None,
+    ) -> "QueryResponse":
+        if feedback == "positive" and training_mode:
+            prev_training = self._training_mode
+            self._training_mode = True
+            try:
+                asyncio.run(
+                    self._save_training_pattern(
+                        history=history,
+                        question=self._last_question,
+                        answer=self._last_answer,
+                        jsondata=self._last_jsondata,
+                        username=username or self._current_username,
+                    )
+                )
+                return QueryResponse(status="Query Completed", message="Org strategy saved from positive feedback.")
+            except Exception as exc:
+                logger.warning("Training mode feedback save failed: %s", exc)
+                return QueryResponse(status="Error", error=str(exc), message=str(exc))
+            finally:
+                self._training_mode = prev_training
+
         if feedback == "positive":
             message = (
                 f"\U0001f44d The user confirmed this approach **worked** for session `{session_id}` "
