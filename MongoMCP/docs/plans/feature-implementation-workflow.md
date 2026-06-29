@@ -2,7 +2,7 @@
 
 Org-wide strategy for planning and shipping features in this repo.  
 **Memory:** `feature_implementation_workflow` (`scope=0`) in cluster  
-**Cursor rule (add when editing rules):** `.cursor/rules/plan-workflow.mdc` with `alwaysApply: true`
+**Cursor rule:** [`.cursor/rules/plan-workflow.mdc`](../../.cursor/rules/plan-workflow.mdc) (`alwaysApply: true`)
 
 ## New plans
 
@@ -10,22 +10,52 @@ Org-wide strategy for planning and shipping features in this repo.
 - Include frontmatter: `name`, `status`, `order`, `overview`, `todos`.
 - Register in the queue table in [`README.md`](README.md).
 
-## Lifecycle (per feature)
+## Folder lifecycle
+
+| Folder | Meaning |
+|--------|---------|
+| `unfinished/` | Not started, in progress, or blocked after a failed batch attempt |
+| `pending/` | Validated, committed, merged into long-running branch — awaiting human review |
+| `finished/` | User reviewed and signed off |
+
+## Batch session (headless or walk-away)
+
+### Step 0 — Start
+
+1. Branch from `main`: create **one long-running feature branch** (e.g. `feature/batch-2026-06-28` or `feature/batch-<theme>`).
+2. Work from [`unfinished/`](unfinished/) in `order` (ties: alphabetical filename).
+
+### Step 1 — Per plan (repeat until `unfinished/` is empty)
 
 | Step | Action |
 |------|--------|
-| 1. Create | Write plan under `unfinished/` |
-| 2. Branch | Feature branch off `main` |
-| 3. Implement | Complete todos; minimal diff |
-| 4. Validate | Run plan checklist; UI → headless Playwright (`.cursor/rules/ui-playwright-validation.mdc`) |
-| 5. Archive | **Only after validation passes:** move to `finished/`, `status: done`, update README queue |
-| 6. Commit | Git commit on feature branch (user must request; no push unless asked) |
-| 7. Next | In batch sessions, finish steps 4–6 before starting the next `order` |
+| 1. Branch | `feature/batch-<date>/<plan-slug>` from the long-running branch |
+| 2. Implement | Complete todos; minimal diff; UI → headless Playwright (`.cursor/rules/ui-playwright-validation.mdc`) |
+| 3. Validate | Run every item in the plan's Validation / Test plan section |
+| 4a. Success | Move to `pending/`, update frontmatter + README queue, commit on plan branch, merge into long-running branch |
+| 4b. Failure | After reasonable retries: commit plan branch with failure notes, **do not merge**, leave plan in `unfinished/` as `blocked`, continue from long-running branch only |
 
-## Archive gate
+### Step 2 — After batch
 
-Do **not** move a plan to `finished/` until validation and testing pass. Use `status: in_progress` in `unfinished/` while work is ongoing.
+- Long-running branch holds all successfully merged work.
+- `pending/` holds plans awaiting your review.
+- Move `pending/` → `finished/` after sign-off.
 
-## Batch execution
+## Archive gates
 
-When executing multiple unfinished plans in one session: sequential only — validate → archive → commit for plan N, then start plan N+1.
+- Do **not** move a plan to `pending/` until validation passes.
+- Do **not** move a plan to `finished/` until you have reviewed merged work.
+- Use `status: in_progress` in `unfinished/` while work is ongoing.
+- Use `status: blocked` in `unfinished/` when a batch attempt failed and the plan branch was left unmerged.
+
+## Git conventions
+
+- Long-running: `feature/batch-YYYY-MM-DD` or `feature/batch-<theme>`
+- Per-plan: `feature/batch-YYYY-MM-DD/<plan-slug>` (slug from filename)
+- Headless batch sessions: **auto-commit and auto-merge pre-authorized** when validation passes (overrides default commit-only-when-asked for this workflow).
+- Do not push unless the user asks.
+- Leave failed plan branches on disk for inspection.
+
+## Sequential execution
+
+Finish validate → archive → commit → merge for plan N before starting plan N+1. Never branch the next plan from a failed, unmerged plan branch.
